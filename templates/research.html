@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}Research — PeopleIntel{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto space-y-4">
+  <div>
+    <h1 class="text-[22px] font-bold tracking-tight">Research coverage</h1>
+    <p class="text-[13px] text-ink-faint mt-0.5">Who actually has a public footprint. Coverage is uneven by design — seniority drives it.</p>
+  </div>
+
+  <div class="card shadow-card p-4 bg-amber-50/40 border-amber-100">
+    <p class="text-[13px] leading-relaxed"><b>Expect thin results for mid-level roles.</b>
+    In this list {{ stats.total }} contacts skew Manager and Director. Senior, conference-speaking
+    contacts return four or five solid findings; a Content Manager often returns only their own
+    LinkedIn profile. An empty panel means no public footprint — not a failed run.</p>
+  </div>
+
+  <section class="card shadow-card overflow-hidden">
+    <div class="overflow-x-auto">
+    <table class="w-full text-left" style="min-width:640px">
+      <thead>
+        <tr class="text-[10.5px] uppercase tracking-wider text-ink-faint bg-[#FAFAFB]">
+          <th class="font-medium px-4 py-2.5">Person</th>
+          <th class="font-medium px-4 py-2.5">Seniority</th>
+          <th class="font-medium px-4 py-2.5 text-center">LinkedIn</th>
+          <th class="font-medium px-4 py-2.5 text-center">Web</th>
+          <th class="font-medium px-4 py-2.5 text-center">Interests</th>
+          <th class="font-medium px-4 py-2.5">Focus</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr class="border-t border-[#EFEFF2] hover:bg-[#FAFAFB]">
+          <td class="px-4 py-3">
+            <a href="/person/{{ r.person.slug }}" class="flex items-center gap-2.5 group">
+              {{ ui.avatar(r.person, 'w-8 h-8 text-[11px]') }}
+              <span class="text-[13.5px] font-medium group-hover:text-brand-600">{{ r.person.full_name }}</span>
+            </a>
+          </td>
+          <td class="px-4 py-3 text-[13px] text-ink-soft capitalize">{{ r.person.seniority or '—' }}</td>
+          <td class="px-4 py-3 text-center text-[13px] {{ 'font-semibold' if r.activities else 'text-ink-faint' }}">{{ r.activities or '0' }}</td>
+          <td class="px-4 py-3 text-center text-[13px] {{ 'font-semibold' if r.findings else 'text-ink-faint' }}">{{ r.findings or '0' }}</td>
+          <td class="px-4 py-3 text-center text-[13px] {{ 'font-semibold' if r.interests else 'text-ink-faint' }}">{{ r.interests or '0' }}</td>
+          <td class="px-4 py-3">
+            {% if r.person.focus_line %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">derived</span>
+            {% else %}
+              <span class="text-[12px] text-ink-faint italic">insufficient evidence</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  {{ ui.workflow_strip('web') }}
+</div>
+{% endblock %}

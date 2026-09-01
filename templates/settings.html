@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}Settings — PeopleIntel{% endblock %}
+
+{% macro row(label, value, ok, note) %}
+<div class="flex items-start justify-between gap-4 py-3 border-b border-[#F2F2F5] last:border-0">
+  <div class="min-w-0">
+    <p class="text-[13.5px] font-medium">{{ label }}</p>
+    <p class="text-[12px] text-ink-faint mt-0.5">{{ note }}</p>
+  </div>
+  <div class="shrink-0 text-right">
+    <p class="text-[12.5px] font-mono">{{ value }}</p>
+    {% if ok %}<span class="text-[10.5px] font-semibold text-emerald-700">configured</span>
+    {% else %}<span class="text-[10.5px] font-semibold text-amber-700">not set</span>{% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="max-w-[820px] mx-auto space-y-4">
+  <div>
+    <h1 class="text-[22px] font-bold tracking-tight">Settings</h1>
+    <p class="text-[13px] text-ink-faint mt-0.5">Read from environment variables. Nothing is stored in the database — this page reports what the process can see, it can't set it.</p>
+  </div>
+
+  <section class="card shadow-card p-5">
+    <h3 class="text-[15px] font-bold mb-1.5">Where the keys go</h3>
+    <p class="text-[12.5px] text-ink-soft leading-relaxed">
+      Put them in a <b>.env</b> file in the project root — copy
+      <span class="font-mono text-[12px]">.env.example</span> to
+      <span class="font-mono text-[12px]">.env</span> and fill it in. It's read
+      at startup, so <b>restart the server</b> after editing. A variable already
+      set in your shell wins over the file.
+    </p>
+    <div class="mt-3 rounded-xl border {% if env_file_found %}border-emerald-100 bg-emerald-50{% else %}border-amber-100 bg-amber-50{% endif %} px-3.5 py-2.5">
+      <p class="text-[12px] {% if env_file_found %}text-emerald-700{% else %}text-amber-800{% endif %}">
+        {% if env_file_found %}Found and loaded{% else %}No .env file yet{% endif %} —
+        <span class="font-mono break-all">{{ env_file_path }}</span>
+      </p>
+    </div>
+    <p class="text-[12px] text-ink-faint mt-3 leading-relaxed">
+      Prefer the shell? Set them in the same terminal you start the server from,
+      then launch it there — a new terminal won't have them.
+    </p>
+    <pre class="mt-2 overflow-x-auto rounded-xl bg-[#FAFAFB] border border-[#EFEFF2] p-3 text-[11.5px] font-mono leading-relaxed">$env:FIRECRAWL_API_KEY = "fc-..."      # PowerShell
+export FIRECRAWL_API_KEY=fc-...        # bash / zsh</pre>
+  </section>
+
+  <section class="card shadow-card p-5">
+    <h3 class="text-[15px] font-bold mb-1">Web research</h3>
+    {{ row('FIRECRAWL_API_KEY', '••••' if firecrawl else '—', firecrawl,
+           'Powers company research and the Google/Web panel.') }}
+  </section>
+
+  <section class="card shadow-card p-5">
+    <h3 class="text-[15px] font-bold mb-1">Language model</h3>
+    <p class="text-[12px] text-ink-faint mb-1">Any OpenAI-compatible endpoint. Groq now, a self-hosted Ollama or vLLM later — a URL change, not a rewrite.</p>
+    {{ row('LLM_BASE_URL', llm_base, true, 'Groq and Ollama both speak this format.') }}
+    {{ row('LLM_MODEL', llm_model, true, 'Used for interest detection and the focus line.') }}
+    {{ row('LLM_API_KEY', '••••' if llm_key else '—', llm_key, 'Not needed for a local Ollama.') }}
+  </section>
+
+  <section class="card shadow-card p-5 bg-[#FAFAFB]">
+    <h3 class="text-[15px] font-bold mb-2">LinkedIn policy</h3>
+    <p class="text-[13px] leading-relaxed">This app has no LinkedIn credentials, no scraper and no third-party
+    LinkedIn provider. Activities are typed or pasted in by a person on the contact's page — link plus
+    the text of the post. There is no setting here to change, by design.</p>
+  </section>
+
+  <section class="card shadow-card p-5">
+    <h3 class="text-[15px] font-bold mb-2">Stack</h3>
+    <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[12.5px]">
+      {% for k, v in [
+        ('Web framework', 'FastAPI (Python)'),
+        ('Templates', 'Jinja2 — server rendered'),
+        ('Styling', 'Tailwind, Play CDN'),
+        ('Interactivity', 'HTMX + plain forms'),
+        ('Database', 'SQLite via SQLAlchemy'),
+        ('Node.js', 'not used anywhere') ] %}
+      <div class="flex gap-2 min-w-0"><span class="text-ink-faint w-[104px] shrink-0">{{ k }}</span><span class="font-medium min-w-0">{{ v }}</span></div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

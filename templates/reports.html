@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}Reports — PeopleIntel{% endblock %}
+
+{% macro bars(title, rows, total, tint) %}
+<section class="card shadow-card p-5">
+  <h3 class="text-[15px] font-bold mb-3.5">{{ title }}</h3>
+  <div class="space-y-2">
+    {% for label, count in rows[:9] %}
+    <div>
+      <div class="flex items-baseline justify-between gap-3 mb-1">
+        <span class="text-[12.5px] capitalize truncate">{{ label }}</span>
+        <span class="text-[12px] font-semibold text-ink-soft shrink-0">{{ count }}</span>
+      </div>
+      <div class="h-1.5 rounded-full bg-[#F1F1F4] overflow-hidden">
+        <div class="h-full rounded-full {{ tint }}" style="width: {{ (count / total * 100)|round(1) }}%"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endmacro %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto space-y-4">
+  <div>
+    <h1 class="text-[22px] font-bold tracking-tight">Reports</h1>
+    <p class="text-[13px] text-ink-faint mt-0.5">Step 9 of the pipeline — the one the mockup's workflow strip counted but didn't show.</p>
+  </div>
+
+  <div class="grid md:grid-cols-3 gap-3.5">
+    {{ bars('By seniority', by_seniority, people|length, 'bg-brand-500') }}
+    {{ bars('By industry', by_industry, people|length, 'bg-violet2-500') }}
+    {{ bars('By country', by_country, people|length, 'bg-teal-500') }}
+  </div>
+
+  {# The finding that matters most operationally. #}
+  <section class="card shadow-card p-5">
+    <div class="flex items-start gap-2.5 mb-3.5">
+      <svg class="w-[18px] h-[18px] text-amber-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+      <div>
+        <h3 class="text-[15px] font-bold">Stale designations</h3>
+        <p class="text-[12.5px] text-ink-faint mt-0.5">Where the web disagrees with the file. Designation is one of the three pillars, and the CSV's copy of it ages faster than anything else in the row.</p>
+      </div>
+    </div>
+
+    {% if drift %}
+    <div class="overflow-x-auto">
+    <table class="w-full text-left" style="min-width:620px">
+      <thead>
+        <tr class="text-[10.5px] uppercase tracking-wider text-ink-faint bg-[#FAFAFB]">
+          <th class="font-medium px-4 py-2.5">Person</th>
+          <th class="font-medium px-4 py-2.5">In the CSV</th>
+          <th class="font-medium px-4 py-2.5">On the web</th>
+          <th class="font-medium px-4 py-2.5">Source</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for p in drift %}
+        <tr class="border-t border-[#EFEFF2]">
+          <td class="px-4 py-3">
+            <a href="/person/{{ p.slug }}" class="text-[13.5px] font-medium hover:text-brand-600">{{ p.full_name }}</a>
+          </td>
+          <td class="px-4 py-3 text-[12.5px] text-ink-soft">{{ p.title }}</td>
+          <td class="px-4 py-3 text-[12.5px] font-medium">{{ p.title_observed }}</td>
+          <td class="px-4 py-3">
+            <a href="{{ p.title_observed_source }}" target="_blank" rel="noopener" class="text-[11.5px] text-violet2-600 hover:underline">{{ p.title_observed_source|domain }}</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="text-[12px] text-ink-faint mt-3">{{ drift|length }} of the {{ researched_count }} contacts researched so far show a different title than the file — a rate worth checking before anyone uses these titles in outreach.</p>
+    {% else %}
+      <p class="text-[13px] text-emerald-700">No mismatches found among the contacts researched so far.</p>
+    {% endif %}
+  </section>
+
+  {{ ui.workflow_strip('reports') }}
+</div>
+{% endblock %}

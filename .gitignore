@@ -1,0 +1,36 @@
+# Never commit real keys.
+.env
+
+# ---------------------------------------------------------------- contact data
+#
+# Everything below is personal data about identifiable third parties — 25 real
+# contacts with work emails, direct and switchboard phone numbers, LinkedIn
+# profiles and employers. None of those people agreed to have it published, so
+# it stays out of the repository regardless of whether the repo is public.
+#
+# The consequence is deliberate: a fresh clone starts with an empty database.
+# Upload a CSV through /upload, or point the seed script at your own export.
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.sqlite
+data/*.sqlite3
+data/*.csv
+data/*.tsv
+
+# Local scratch
+*.log
+.DS_Store
+Thumbs.db
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Editor
+.idea/
+.vscode/
+*.swp

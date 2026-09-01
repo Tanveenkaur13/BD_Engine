@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}Companies — PeopleIntel{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto space-y-4">
+  <div class="flex items-end justify-between gap-4 flex-wrap">
+    <div>
+      <h1 class="text-[22px] font-bold tracking-tight">Companies</h1>
+      <p class="text-[13px] text-ink-faint mt-0.5">{{ companies|length }} companies · {{ stats.companies_described }} with a researched description</p>
+    </div>
+    <form method="get" class="flex gap-2">
+      <input name="q" value="{{ q }}" placeholder="Name or industry…"
+             class="h-9 px-3 rounded-lg border border-[#E2E3E8] bg-white text-[13px] w-[220px] outline-none focus:border-violet2-300">
+      <button class="h-9 px-4 rounded-lg bg-brand-700 hover:bg-brand-600 text-white text-[13px] font-semibold">Search</button>
+    </form>
+  </div>
+
+  <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+    {% for c in companies %}
+    <a href="/company/{{ c.id }}" class="card shadow-card p-4 hover:border-violet2-200 transition block">
+      <div class="flex items-start gap-3">
+        <span class="grid place-items-center w-10 h-10 rounded-lg bg-[#FAFAFB] border border-[#EFEFF2] shrink-0 overflow-hidden">
+          {% if c.domain %}
+          <img src="https://www.google.com/s2/favicons?domain={{ c.domain }}&sz=32" alt="" class="w-5 h-5" loading="lazy"
+               onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+          <span class="hidden text-sm font-bold text-ink-faint">{{ c.name[:1] }}</span>
+          {% else %}<span class="text-sm font-bold text-ink-faint">{{ c.name[:1] }}</span>{% endif %}
+        </span>
+        <div class="min-w-0">
+          <h3 class="text-[14px] font-semibold leading-snug">{{ c.name }}</h3>
+          <p class="text-[11.5px] text-ink-faint capitalize mt-0.5">{{ c.industry or 'industry unknown' }}</p>
+        </div>
+      </div>
+      {% if c.description %}
+        <p class="text-[12.5px] text-ink-soft leading-relaxed mt-2.5 line-clamp-3">{{ c.clean_description or c.description }}</p>
+      {% else %}
+        <p class="text-[12px] text-ink-faint italic mt-2.5">Description not researched yet.</p>
+      {% endif %}
+      <div class="flex flex-wrap gap-x-3 gap-y-1 mt-3 text-[11.5px] text-ink-faint">
+        {% if c.employees %}<span>{{ '{:,}'.format(c.employees) }} employees</span>{% endif %}
+        {% if c.location %}<span>· {{ c.location }}</span>{% endif %}
+        <span>· {{ c.people|length }} contact{{ 's' if c.people|length != 1 }}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

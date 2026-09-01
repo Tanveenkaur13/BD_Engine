@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}Outreach — PeopleIntel{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto space-y-4">
+
+  <div>
+    <h1 class="text-[22px] font-bold tracking-tight">Outreach</h1>
+    <p class="text-[13px] text-ink-faint mt-0.5">Comment · wait 2 days · comment · connect · email 2 days later.
+      Every step is done by hand — this tracks where each contact is and what is due.</p>
+  </div>
+
+  {# Sheets rather than one long page: the New list alone fills a screen, which
+     used to push the in-progress list — the one with actual work in it — below
+     the fold. Each tab carries its own count so the numbers are visible without
+     opening the sheet. #}
+  {% set sheets = [
+    ('today',  'Due today',        pending_today|length),
+    ('new',    'New',              new_people|length),
+    ('active', 'In progress',      active|length),
+    ('done',   'Complete',         done|length),
+  ] %}
+  <div class="flex items-center gap-1.5 flex-wrap border-b border-[#EAEBEF] pb-2.5">
+    {% for key, label, count in sheets %}
+    <a href="/outreach?view={{ key }}"
+       class="flex items-center gap-2 px-3 h-9 rounded-lg text-[13px] font-medium transition
+       {% if view == key %}bg-brand-700 text-white shadow-sm{% else %}text-ink-soft hover:bg-[#F4F4F6]{% endif %}">
+      {{ label }}
+      <span class="text-[11px] font-semibold rounded-full px-1.5 py-0.5
+        {% if view == key %}bg-white text-brand-700{% elif key == 'today' and count %}bg-brand-50 text-brand-700 border border-brand-200{% else %}bg-[#F4F4F6] text-ink-faint border border-[#EAEBEF]{% endif %}">{{ count }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  {# --------------------------------------------------------- due today #}
+  {% if view == 'today' %}
+  <section id="today" class="card shadow-card p-5">
+    <div class="flex items-start gap-2.5 mb-3.5">
+      <svg class="w-[19px] h-[19px] text-brand-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <div class="min-w-0">
+        <h3 class="text-[15px] font-bold leading-tight">Due today</h3>
+        <p class="text-[11.5px] text-ink-faint mt-0.5">Everything open and due today or earlier. Overdue steps stay
+          here rather than moving to their own list — a task that slipped is still today's task.</p>
+      </div>
+    </div>
+
+    {% if pending_today %}
+    <ol class="space-y-2.5">
+      {% for step in pending_today %}
+      {{ ui.outreach_task_row(step, back='/outreach?view=today') }}
+      {% endfor %}
+    </ol>
+    {% else %}
+    <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
+      <svg class="w-7 h-7 mx-auto text-ink-faint/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 6 9 17l-5-5"/></svg>
+      <p class="text-[13px] font-medium mt-2">Nothing due today</p>
+      <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Either every open step is still waiting out its
+        gap, or nobody is in the sequence yet. Start someone from the <a href="/outreach?view=new" class="text-violet2-600 hover:underline">New</a> sheet.</p>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {# ------------------------------------------------------------- new #}
+  {% if view == 'new' %}
+  <section class="card shadow-card p-5">
+    <div class="flex items-start justify-between gap-3 mb-3.5">
+      <div class="flex items-start gap-2.5">
+        <svg class="w-[19px] h-[19px] text-ink-soft mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M19 8v6M22 11h-6"/></svg>
+        <div class="min-w-0">
+          <h3 class="text-[15px] font-bold leading-tight">New — not approached</h3>
+          <p class="text-[11.5px] text-ink-faint mt-0.5">Nobody has commented, connected or emailed yet</p>
+        </div>
+      </div>
+      <span class="text-[11px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2.5 py-1 shrink-0">{{ new_people|length }}</span>
+    </div>
+
+    {% if new_people %}
+    <ul class="space-y-2">
+      {% for p in new_people %}
+      <li class="flex items-center gap-3 pb-2 border-b border-[#F2F2F5] last:border-0 last:pb-0">
+        <div class="min-w-0 flex-1">
+          <a href="/person/{{ p.slug }}" class="text-[13.5px] font-medium hover:text-brand-600 hover:underline">{{ p.full_name }}</a>
+          <p class="text-[12px] text-ink-faint truncate">{{ p.title or 'Designation unknown' }}{% if p.company %} · {{ p.company.name }}{% endif %}</p>
+        </div>
+        <form method="post" action="/person/{{ p.slug }}/outreach/start" class="shrink-0">
+          <input type="hidden" name="back" value="/outreach?view=active">
+          <button class="text-[12px] font-medium px-3 py-1.5 rounded-lg bg-brand-700 text-white hover:bg-brand-600">Start sequence</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="text-[11px] text-ink-faint mt-3">Starting a sequence moves the contact to the
+      <a href="/outreach?view=active" class="text-violet2-600 hover:underline">In progress</a> sheet and creates the
+      first task — comment on one of their posts.</p>
+    {% else %}
+    <p class="text-[13px] text-ink-faint italic">Everyone has been approached.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {# ------------------------------------------------------- in progress #}
+  {% if view == 'active' %}
+  <section class="card shadow-card p-5">
+    <div class="flex items-start justify-between gap-3 mb-3.5">
+      <div class="flex items-start gap-2.5">
+        <svg class="w-[19px] h-[19px] text-violet2-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></svg>
+        <div class="min-w-0">
+          <h3 class="text-[15px] font-bold leading-tight">In progress — already approached</h3>
+          <p class="text-[11.5px] text-ink-faint mt-0.5">Soonest due first. Each contact's open step is actionable here.</p>
+        </div>
+      </div>
+      <span class="text-[11px] font-medium text-violet2-600 bg-violet2-50 border border-violet2-100 rounded-full px-2.5 py-1 shrink-0">{{ active|length }}</span>
+    </div>
+
+    {% if active %}
+    <ol class="space-y-2.5">
+      {% for p in active %}
+      {% set step = p.outreach_open %}
+      {% if step %}
+      {{ ui.outreach_task_row(step, back='/outreach?view=active') }}
+      {% endif %}
+      {% endfor %}
+    </ol>
+    {% else %}
+    <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
+      <p class="text-[13px] font-medium">Nobody is mid-sequence</p>
+      <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Start someone from the
+        <a href="/outreach?view=new" class="text-violet2-600 hover:underline">New</a> sheet and they appear here
+        until every step is closed.</p>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {# ---------------------------------------------------------- complete #}
+  {% if view == 'done' %}
+  <section class="card shadow-card p-5">
+    <div class="flex items-start justify-between gap-3 mb-3.5">
+      <div class="flex items-start gap-2.5">
+        <svg class="w-[19px] h-[19px] text-emerald-700 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+        <div class="min-w-0">
+          <h3 class="text-[15px] font-bold leading-tight">Sequence complete</h3>
+          <p class="text-[11.5px] text-ink-faint mt-0.5">Every step closed — done, or deliberately skipped</p>
+        </div>
+      </div>
+      <span class="text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2.5 py-1 shrink-0">{{ done|length }}</span>
+    </div>
+
+    {% if done %}
+    <ul class="space-y-2">
+      {% for p in done %}
+      <li class="flex items-center gap-3 pb-2 border-b border-[#F2F2F5] last:border-0 last:pb-0">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-700 shrink-0"></span>
+        <div class="min-w-0 flex-1">
+          <a href="/person/{{ p.slug }}#outreach" class="text-[13.5px] font-medium hover:text-brand-600 hover:underline">{{ p.full_name }}</a>
+          <p class="text-[12px] text-ink-faint truncate">{{ p.title or 'Designation unknown' }}{% if p.company %} · {{ p.company.name }}{% endif %}</p>
+        </div>
+        <span class="text-[11.5px] text-ink-faint shrink-0">{{ p.outreach_done_count }}/{{ p.outreach_total }} done</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-[13px] text-ink-faint italic">No sequence has run to the end yet.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

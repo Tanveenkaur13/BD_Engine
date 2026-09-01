@@ -1,0 +1,886 @@
+{# ============================================================ macros #}
+
+{# Research is a separate axis from enrichment: a person can be Needs
+   Enrichment and Researched at the same time. Deliberately quieter than the
+   enrichment badge — it reports work done, not a problem to fix. #}
+{# The Research button. Posts and returns immediately; the work runs in a
+   thread and the badge shows "Researching…" until it lands. `back` is where to
+   send the browser afterwards, so the people list returns to the list. #}
+{% macro research_button(person, back='', small=True) %}
+  {% if person.can_research %}
+  <form method="post" action="/person/{{ person.slug }}/research" class="inline-flex">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="inline-flex items-center gap-1.5 rounded-full border border-violet2-200 bg-white hover:bg-violet2-50 text-violet2-700 font-semibold
+                   {{ 'text-[10.5px] px-2 py-0.5' if small else 'text-[12px] px-2.5 py-1' }}"
+            title="Search the web and LinkedIn for this contact. Uses API credits.">
+      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      {{ 'Retry' if person.research_status == 'failed' else 'Research' }}
+    </button>
+  </form>
+  {% endif %}
+{% endmacro %}
+
+
+{% macro research_badge(status, label) %}
+  {% if status == 'running' %}
+    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-violet2-50 text-violet2-700 border border-violet2-100">{{ label }}</span>
+  {% elif status == 'researched' %}
+    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-sky-50 text-sky-700 border border-sky-100">{{ label }}</span>
+  {% elif status == 'failed' %}
+    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-rose-50 text-rose-700 border border-rose-100">{{ label }}</span>
+  {% else %}
+    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-[#F4F4F6] text-ink-faint border border-[#EAEBEF]">{{ label }}</span>
+  {% endif %}
+{% endmacro %}
+
+
+{% macro status_badge(status, label) %}
+  {% if status == 'complete' %}
+    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">{{ label }}</span>
+  {% elif status == 'failed' %}
+    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-100">{{ label }}</span>
+  {% else %}
+    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-100">{{ label }}</span>
+  {% endif %}
+{% endmacro %}
+
+
+{# The provenance tag — every fetched fact says where it came from and when.
+   This is the piece the mockup was missing. #}
+{# muted=true drops the green tick: the app still fetched the page, but a
+   confident checkmark next to "identity unconfirmed" reads as a claim that
+   this is the right person. #}
+{% macro source_tag(url, fetched_at, verb='Verified', muted=False) %}
+  {% if url %}
+  <a href="{{ url }}" target="_blank" rel="noopener"
+     class="inline-flex items-center gap-1.5 text-[11px] {{ 'text-ink-faint' if muted else 'text-emerald-700' }} hover:underline mt-1.5 group">
+    <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="{{ 'M12 8v4M12 16h.01M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18' if muted else 'M20 6L9 17l-5-5' }}"/></svg>
+    <span>{{ verb }} — {{ url|domain }}{% if fetched_at %}, fetched {{ fetched_at|short_date }}{% endif %}</span>
+  </a>
+  {% endif %}
+{% endmacro %}
+
+
+{% macro not_found(what) %}
+  <p class="text-[12.5px] text-ink-faint italic">Not found — {{ what }}</p>
+{% endmacro %}
+
+
+{# The same four counts as stat_tiles, laid out vertically and tightly.
+   stat_tiles puts four chunky tiles in a row, which works on the full-width
+   Enrichment and Upload pages but is cramped in the dashboard's 380px column —
+   "Needs Enrichment" wraps and the block costs 90px for four numbers. This is
+   one line each: label left, count right in its own colour. #}
+{% macro stat_rows(s) %}
+<ul>
+  {% for label, value, tone in [
+      ('Total contacts', s.total, 'text-sky-700'),
+      ('Imported', s.imported, 'text-emerald-700'),
+      ('Needs enrichment', s.needs_enrichment, 'text-amber-700'),
+      ('Failed', s.failed, 'text-rose-700') ] %}
+  <li class="flex items-baseline gap-2.5 py-0.5 border-b border-[#F2F2F5] last:border-0 leading-tight">
+    <span class="text-[12.5px] text-ink-soft flex-1 min-w-0">{{ label }}</span>
+    <span class="text-[13px] font-bold {{ tone }}">{{ value }}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
+
+{% macro stat_tiles(s) %}
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+  {% for label, value, tint, border in [
+      ('Total Contacts', s.total, 'bg-sky-50', 'border-sky-100'),
+      ('Imported', s.imported, 'bg-emerald-50', 'border-emerald-100'),
+      ('Needs Enrichment', s.needs_enrichment, 'bg-amber-50', 'border-amber-100'),
+      ('Failed', s.failed, 'bg-rose-50', 'border-rose-100') ] %}
+  <div class="{{ tint }} border {{ border }} rounded-xl px-4 py-3 text-center">
+    <div class="text-2xl font-bold leading-none">{{ value }}</div>
+    <div class="text-[11.5px] text-ink-soft mt-1.5">{{ label }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+
+{% macro avatar(person, size='w-16 h-16 text-lg') %}
+{# No photo in the CSV, and LinkedIn photos can't be hotlinked or reused,
+   so the avatar is initials on a stable per-person tint. #}
+{% set tints = ['bg-brand-100 text-brand-700','bg-violet2-100 text-violet2-700',
+                'bg-sky-100 text-sky-700','bg-emerald-100 text-emerald-700',
+                'bg-amber-100 text-amber-700','bg-teal-100 text-teal-700'] %}
+<span class="grid place-items-center rounded-full font-semibold shrink-0 {{ size }} {{ tints[person.id % 6] }}">{{ person.initials }}</span>
+{% endmacro %}
+
+
+{% macro people_table(people, selected_slug=None, link_full=False) %}
+<div class="overflow-x-auto">
+<table class="w-full text-left" style="min-width:520px">
+  <thead>
+    <tr class="text-[10.5px] uppercase tracking-wider text-ink-faint bg-[#FAFAFB]">
+      <th class="font-medium px-4 py-2.5">Person</th>
+      <th class="font-medium px-4 py-2.5">Title</th>
+      <th class="font-medium px-4 py-2.5">Company</th>
+      <th class="font-medium px-4 py-2.5">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in people %}
+    <tr class="border-t border-[#EFEFF2] hover:bg-[#FAFAFB] {% if p.slug == selected_slug %}bg-brand-50/60{% endif %}">
+      <td class="px-4 py-3">
+        <a href="{% if link_full %}/person/{{ p.slug }}{% else %}/?selected={{ p.slug }}{% endif %}" class="flex items-center gap-2.5 group">
+          {{ avatar(p, 'w-8 h-8 text-[11px]') }}
+          <span class="text-[13.5px] font-medium group-hover:text-brand-600">{{ p.full_name }}</span>
+        </a>
+      </td>
+      <td class="px-4 py-3 text-[13px] text-ink-soft">
+        {{ p.title or '—' }}
+        {% if p.title_drift %}
+          <span title="The web shows a different title: {{ p.title_observed }}"
+                class="ml-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 align-middle">stale?</span>
+        {% endif %}
+      </td>
+      <td class="px-4 py-3 text-[13px] text-ink-soft">{{ p.company.name if p.company else '—' }}</td>
+      <td class="px-4 py-3">
+        <span class="inline-flex flex-wrap items-center gap-1.5">
+          {{ status_badge(p.enrichment_status, p.status_label) }}
+          {{ research_badge(p.research_status, p.research_label) }}
+          {{ research_button(p, back='/people') }}
+        </span>
+      </td>
+    </tr>
+  {% endfor %}
+  {% if not people %}
+    <tr><td colspan="4" class="px-4 py-10 text-center text-[13px] text-ink-faint">No contacts match.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+{% endmacro %}
+
+
+{# ------------------------------------------------- person profile head #}
+{# A filled dot in front of a value this app went and found, rather than one
+   that came from the CSV. The tooltip carries what made it acceptable, the page
+   it was published on, and when — so "found automatically" is checkable rather
+   than a claim. Only ever shown for a verified fill; resolve.py writes nothing
+   it could not corroborate. #}
+{% macro found_dot(source, url, found_at, what='value') %}
+{%- if source -%}
+<span class="w-1.5 h-1.5 rounded-full bg-violet2-600 shrink-0 cursor-help"
+      title="Found automatically — this {{ what }} was not in the CSV. {{ source[0]|upper }}{{ source[1:] }}{% if url %}. Published at: {{ url }}{% endif %}{% if found_at %}, found {{ found_at|short_date }}{% endif %}. Written only because it verified; an unverified or ambiguous candidate is discarded, never stored."></span>
+{%- endif -%}
+{% endmacro %}
+
+
+{% macro person_head(person) %}
+<div class="card shadow-card p-5">
+  <div class="flex flex-col lg:flex-row gap-5">
+    <div class="flex gap-4 flex-1 min-w-0">
+      {{ avatar(person, 'w-20 h-20 text-2xl') }}
+      <div class="min-w-0">
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <h2 class="text-[21px] font-bold tracking-tight">{{ person.full_name }}</h2>
+          {{ status_badge(person.enrichment_status, person.status_label) }}
+          {{ research_badge(person.research_status, person.research_label) }}
+          {{ research_button(person, small=False) }}
+        </div>
+
+        <p class="text-[14px] text-ink-soft mt-1">{{ person.title or 'Designation unknown' }}
+          {% if person.seniority %}<span class="text-ink-faint">· {{ person.seniority }}</span>{% endif %}
+        </p>
+        <p class="text-[13.5px] text-ink-faint">{{ person.company.name if person.company else '—' }}</p>
+
+        {% if person.title_drift %}
+        <div class="mt-2.5 flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+          <svg class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          <div class="text-[12.5px] leading-relaxed">
+            <b class="text-amber-800">Designation may be stale.</b>
+            The file says <i>{{ person.title }}</i>, the web says <i>{{ person.title_observed }}</i>.
+            {{ source_tag(person.title_observed_source, person.title_observed_at, 'Seen on') }}
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="mt-3 space-y-1.5 text-[13px]">
+          {% if person.email %}
+          <div class="flex items-center gap-2.5">
+            <svg class="w-[15px] h-[15px] text-ink-faint shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg>
+            {{ found_dot(person.email_source, person.email_source_url, person.email_found_at, 'email address') }}
+            <a href="mailto:{{ person.email }}" class="hover:underline break-all">{{ person.email }}</a>
+            {% if person.email_status == 'valid' %}<span class="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5">valid</span>
+            {% elif person.email_status %}<span class="text-[10px] font-semibold text-violet2-600 bg-violet2-50 border border-violet2-100 rounded px-1.5 py-0.5 cursor-help" title="Published as theirs on a page that also names them. That is not proof the mailbox accepts mail — verifying deliverability needs a separate provider.">{{ person.email_status }}</span>{% endif %}
+          </div>
+          {% endif %}
+          {% if person.linkedin_url %}
+          <div class="flex items-center gap-2.5">
+            <svg class="w-[15px] h-[15px] text-[#0A66C2] shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3A2 2 0 0 1 21 5v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14M8.6 18.3v-7H6.3v7h2.3M7.4 10a1.3 1.3 0 1 0 0-2.7 1.3 1.3 0 0 0 0 2.7m10.9 8.3v-4c0-2.1-1.1-3.1-2.6-3.1a2.3 2.3 0 0 0-2 1.1v-1H11.4c0 .7 0 7 0 7h2.3v-3.9c0-.2 0-.4.1-.6.2-.4.5-.9 1.2-.9.9 0 1.2.7 1.2 1.7v3.7h2.2Z"/></svg>
+            {{ found_dot(person.linkedin_source, none, person.linkedin_found_at, 'LinkedIn URL') }}
+            <a href="{{ person.linkedin_url }}" target="_blank" rel="noopener" class="hover:underline break-all text-ink-soft">{{ person.linkedin_url|domain }}{{ '/in/' if '/in/' in person.linkedin_url }}{{ person.linkedin_url.split('/in/')[-1].rstrip('/') if '/in/' in person.linkedin_url }}</a>
+          </div>
+          {% endif %}
+          <div class="flex items-center gap-2.5">
+            <svg class="w-[15px] h-[15px] text-ink-faint shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.5 2.8.6a2 2 0 0 1 1.7 2Z"/></svg>
+            {% if person.phone_direct %}
+              <span>{{ person.phone_direct }}</span>
+              <span class="text-[10px] text-ink-faint">direct</span>
+            {% elif person.phone_corporate %}
+              <span class="text-ink-soft">{{ person.phone_corporate }}</span>
+              <span class="text-[10px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded px-1.5 py-0.5">company switchboard — no direct line</span>
+            {% else %}
+              <span class="text-[12.5px] text-ink-faint italic">No phone on file</span>
+            {% endif %}
+          </div>
+          {% if person.location %}
+          <div class="flex items-center gap-2.5 text-ink-soft">
+            <svg class="w-[15px] h-[15px] text-ink-faint shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            {{ person.location }}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# --- company info side panel --- #}
+    {% if person.company %}
+    {% set c = person.company %}
+    <div class="lg:w-[268px] shrink-0 bg-[#FAFAFB] border border-[#EFEFF2] rounded-xl p-4">
+      <div class="flex items-center gap-2 text-[11px] uppercase tracking-wider text-ink-faint mb-2.5">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V7l8-4 8 4v14M9 21v-6h6v6"/></svg>
+        Company Info
+      </div>
+      <a href="/company/{{ c.id }}" class="text-[15px] font-bold hover:text-brand-600">{{ c.name }}</a>
+      <dl class="mt-2.5 space-y-1.5 text-[12.5px]">
+        {% if c.industry %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[62px] shrink-0">Industry</dt><dd class="capitalize min-w-0">{{ c.industry }}</dd></div>{% endif %}
+        {% if c.employees %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[62px] shrink-0">Employees</dt><dd class="min-w-0">{{ '{:,}'.format(c.employees) }}</dd></div>{% endif %}
+        {% if c.location %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[62px] shrink-0">Location</dt><dd class="min-w-0">{{ c.location }}</dd></div>{% endif %}
+        {% if c.annual_revenue %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[62px] shrink-0">Revenue</dt><dd class="min-w-0">{{ c.annual_revenue|money }}</dd></div>{% endif %}
+        {% if c.website %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[62px] shrink-0">Website</dt><dd class="min-w-0"><a href="{{ c.website }}" target="_blank" rel="noopener" class="text-violet2-600 hover:underline break-all">{{ c.domain }}</a></dd></div>{% endif %}
+      </dl>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+
+{# --------------------------------------------- interests / focus panel #}
+{% macro summary_panel(person) %}
+{% set s = person.profile_summary %}
+<section class="card shadow-card p-5">
+  <div class="flex items-start gap-2.5 mb-3">
+    <svg class="w-[19px] h-[19px] text-brand-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
+    <div class="min-w-0">
+      <h3 class="text-[15px] font-bold leading-tight">Profile Summary</h3>
+      <p class="text-[11.5px] text-ink-faint mt-0.5">Who they are, what they do, and who they do it for</p>
+    </div>
+  </div>
+
+  <p class="text-[13.5px] leading-relaxed">{{ s.text }}</p>
+
+  {% if s.basis %}
+  <p class="mt-2.5 text-[11px] text-ink-faint">Composed from {{ s.basis|join(' · ') }} — every sentence restates a field
+    already on this record, so nothing here is inferred.</p>
+  {% endif %}
+</section>
+{% endmacro %}
+
+
+{% macro interests_panel(person) %}
+<div class="rounded-2xl border border-violet2-100 bg-violet2-50/70 p-5">
+  <div class="flex items-center gap-2 mb-3">
+    <svg class="w-[17px] h-[17px] text-violet2-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>
+    <h3 class="text-[15px] font-bold">Interests / Current Focus</h3>
+  </div>
+
+  {% if person.interests %}
+    <div class="flex flex-wrap gap-2">
+      {% for i in person.interests %}
+      <span title="Evidence: {{ i.evidence }}"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-violet2-200 text-[12.5px] font-medium text-violet2-700 cursor-help">
+        {{ i.label }}
+        <svg class="w-3 h-3 text-violet2-500/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+      </span>
+      {% endfor %}
+    </div>
+    {% if person.focus_line %}
+    <p class="mt-3.5 text-[13.5px] leading-relaxed"><b>Focus:</b> {{ person.focus_line }}</p>
+    <p class="mt-2 text-[11px] text-ink-faint">Derived from {{ person.activities|length }} LinkedIn {{ 'activity' if person.activities|length == 1 else 'activities' }}
+      and {{ person.findings|length }} web {{ 'finding' if person.findings|length == 1 else 'findings' }}
+      · generated {{ person.focus_generated_at|short_date }}
+      {% if person.focus_model %}· {{ person.focus_model }}{% endif %}
+      · hover a chip for its evidence</p>
+    {% endif %}
+  {% else %}
+    <div class="flex items-start gap-2.5 text-[13px]">
+      <svg class="w-4 h-4 text-violet2-500/60 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+      <div>
+        <p class="font-medium">Not enough evidence to name a focus yet.</p>
+        <p class="text-ink-soft mt-0.5 text-[12.5px]">
+          Interests are only inferred from things this person actually said or was
+          credited in. With {{ person.activities|length }} LinkedIn {{ 'activity' if person.activities|length == 1 else 'activities' }}
+          and {{ person.findings|length }} web {{ 'finding' if person.findings|length == 1 else 'findings' }} on file,
+          anything here would be a guess. Paste a few LinkedIn activities below and this fills in.
+        </p>
+      </div>
+    </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+
+{# ------------------------------------------------ top 5 LinkedIn panel #}
+{% macro linkedin_panel(person, allow_add=True, error=None) %}
+{% set icons = {
+  'post':    'M12 5v14M5 12h14',
+  'repost':  'M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3',
+  'comment': 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  'tagged':  'M20.6 13.4 12 22l-9-9 8.6-8.6A2 2 0 0 1 13 4h6a2 2 0 0 1 2 2v6a2 2 0 0 1-.4 1.4Z' } %}
+<section id="linkedin" class="card shadow-card p-5">
+  <div class="flex items-start justify-between gap-3 mb-3.5">
+    <div class="flex items-start gap-2.5">
+      <svg class="w-[19px] h-[19px] text-[#0A66C2] mt-0.5 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3A2 2 0 0 1 21 5v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14M8.6 18.3v-7H6.3v7h2.3M7.4 10a1.3 1.3 0 1 0 0-2.7 1.3 1.3 0 0 0 0 2.7m10.9 8.3v-4c0-2.1-1.1-3.1-2.6-3.1a2.3 2.3 0 0 0-2 1.1v-1H11.4c0 .7 0 7 0 7h2.3v-3.9c0-.2 0-.4.1-.6.2-.4.5-.9 1.2-.9.9 0 1.2.7 1.2 1.7v3.7h2.2Z"/></svg>
+      <div>
+        <h3 class="text-[15px] font-bold leading-tight">Top 5 LinkedIn Activity</h3>
+        <p class="text-[11.5px] text-ink-faint mt-0.5">Posts · Reposts · Comments · Tagged — found by search or added by hand, never scraped</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      {% if allow_add and person.activities %}
+      <form method="post" action="/person/{{ person.slug }}/suggest-comments">
+        <input type="hidden" name="back" value="/person/{{ person.slug }}#linkedin">
+        {% if person.activities|selectattr('suggested_comment')|list %}<input type="hidden" name="force" value="1">{% endif %}
+        <button class="text-[11.5px] font-medium px-2.5 py-1 rounded-lg border border-violet2-100 bg-violet2-50 text-violet2-600 hover:bg-violet2-50">
+          {% if person.activities|selectattr('suggested_comment')|list %}Redraft comments{% else %}Draft comments{% endif %}
+        </button>
+      </form>
+      {% endif %}
+      <span class="text-[11px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2.5 py-1">{{ person.activities|length }} / 5</span>
+    </div>
+  </div>
+
+  {% if person.activities %}
+  <ol class="space-y-2.5">
+    {% for a in person.activities %}
+    <li class="flex gap-3 group">
+      <span class="text-[12px] font-semibold text-ink-faint w-3.5 shrink-0 pt-1.5">{{ loop.index }}</span>
+      <span class="grid place-items-center w-7 h-7 rounded-lg shrink-0 mt-0.5
+        {% if a.activity_type == 'post' %}bg-sky-50 text-sky-600
+        {% elif a.activity_type == 'repost' %}bg-emerald-50 text-emerald-700
+        {% elif a.activity_type == 'comment' %}bg-violet2-50 text-violet2-600
+        {% else %}bg-amber-50 text-amber-600{% endif %}">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="{{ icons.get(a.activity_type, icons['post']) }}"/></svg>
+      </span>
+      <div class="min-w-0 flex-1 pb-2.5 border-b border-[#F2F2F5] group-last:border-0 group-last:pb-0">
+        <div class="flex items-start justify-between gap-3">
+          <span class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] font-semibold uppercase tracking-wide
+              {% if a.activity_type == 'post' %}text-sky-600{% elif a.activity_type == 'repost' %}text-emerald-700{% elif a.activity_type == 'comment' %}text-violet2-600{% else %}text-amber-600{% endif %}">{{ a.type_label }}</span>
+            {% if a.from_search and a.corroborated %}
+            <span class="text-[10px] font-semibold uppercase tracking-wide bg-emerald-50 border border-emerald-100 text-emerald-700 rounded px-1.5 py-0.5 cursor-help"
+                  title="{{ a.corroboration }}{% if a.source_query %} — query: {{ a.source_query }}{% endif %}{% if a.fetched_at %}, fetched {{ a.fetched_at|short_date }}{% endif %}. LinkedIn was not crawled.">confirmed</span>
+            {% elif a.from_search %}
+            <span class="text-[10px] font-semibold uppercase tracking-wide bg-amber-50 border border-amber-100 text-amber-800 rounded px-1.5 py-0.5 cursor-help"
+                  title="{{ a.corroboration }}{% if a.source_query %} — query: {{ a.source_query }}{% endif %}{% if a.fetched_at %}, fetched {{ a.fetched_at|short_date }}{% endif %}. Shown because it matched the name; not used for interest chips.">unverified</span>
+            {% else %}
+            <span class="text-[10px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded px-1.5 py-0.5">pasted</span>
+            {% endif %}
+          </span>
+          <span class="text-[11px] text-ink-faint shrink-0">{{ a.activity_date|relative_time or 'date unknown' }}</span>
+        </div>
+        {% if a.text %}
+        <p class="text-[13px] leading-relaxed mt-0.5">{{ a.text }}</p>
+        {% else %}
+        <p class="text-[12.5px] italic text-ink-faint mt-0.5">Link only — no text was indexed, so this one can't produce an interest chip. Paste the post's text to fix that.</p>
+        {% endif %}
+        {% if a.suggested_comment %}
+        {# The recommended comment sits with the post it replies to, in a
+           textarea so it can be selected and edited before sending. Editing
+           here is not saved — it is a scratchpad for the copy you paste into
+           LinkedIn, and the stored draft stays as generated. #}
+        <div class="mt-2 rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5">
+          <div class="flex items-center gap-1.5 mb-1.5">
+            <svg class="w-3.5 h-3.5 text-violet2-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-600">Recommended comment</span>
+            <span class="text-[10px] text-ink-faint">· edit before sending</span>
+          </div>
+          <textarea rows="2" class="w-full resize-y rounded-lg bg-white border border-violet2-100 px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-violet2-200">{{ a.suggested_comment }}</textarea>
+          <p class="text-[10px] text-ink-faint mt-1">Drafted from this post only
+            {%- if a.suggested_model %} · {{ a.suggested_model }}{% endif %}
+            {%- if a.suggested_at %} · {{ a.suggested_at|short_date }}{% endif %}.
+            Nothing is posted automatically.</p>
+        </div>
+        {% elif a.suggested_note %}
+        <div class="mt-2 rounded-xl border border-[#EFEFF2] bg-[#FAFAFB] px-2.5 py-2">
+          <p class="text-[11.5px] text-ink-faint"><b class="text-ink-soft">No comment drafted.</b> {{ a.suggested_note }}</p>
+        </div>
+        {% endif %}
+        <div class="flex items-center gap-3 flex-wrap">
+          {% if a.url %}
+          <a href="{{ a.url }}" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 text-[11px] text-[#0A66C2] hover:underline mt-1.5">
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+            Open on LinkedIn{% if a.activity_date %} · {{ a.activity_date|short_date }}{% endif %}
+          </a>
+          {% endif %}
+          {% if allow_add %}
+          <form method="post" action="/activity/{{ a.id }}/delete" class="mt-1.5">
+            <button class="text-[11px] text-ink-faint hover:text-rose-600">remove</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if person.activities|length < 5 %}
+    <p class="mt-3 text-[12px] text-ink-faint">{{ 5 - person.activities|length }} more slot{{ 's' if (5 - person.activities|length) != 1 }} open — showing what's actually on file, not padding to five.</p>
+  {% endif %}
+  {% else %}
+  <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
+    <svg class="w-7 h-7 mx-auto text-ink-faint/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8v8"/></svg>
+    <p class="text-[13px] font-medium mt-2">No LinkedIn activity on file</p>
+    <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">No post could be matched to this person's LinkedIn profile. Search only keeps posts whose author is demonstrably them — posts that merely share their name are discarded, because most of them belong to someone else. Paste up to five posts, reposts, comments or tagged mentions below to fill the gap.</p>
+  </div>
+  {% endif %}
+
+  {# Search only writes posts whose author slug matches this contact, so an
+     unverified row can only come from a database saved before that rule. The
+     badge branch above still labels one if it turns up. #}
+  {% set unverified = person.activities|rejectattr('trusted')|list|length %}
+  {% if unverified %}
+  <div class="mt-3 rounded-xl bg-amber-50 border border-amber-100 px-3.5 py-2.5">
+    <p class="text-[12px] text-amber-800 leading-relaxed">
+      {{ unverified }} row{{ 's' if unverified != 1 }} could not be tied to this
+      person's LinkedIn profile and may belong to a namesake. Rows like these are
+      no longer collected — hover the <b>unverified</b> tag for the reason.
+    </p>
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div class="mt-3 rounded-lg bg-rose-50 border border-rose-100 px-3 py-2">
+    <p class="text-[12px] text-rose-700">{{ error }}</p>
+  </div>
+  {% endif %}
+
+  {% if allow_add and person.activities|length < 5 %}
+  <details class="mt-4 group">
+    <summary class="cursor-pointer list-none inline-flex items-center gap-2 text-[12.5px] font-semibold text-violet2-700 hover:text-violet2-600">
+      <svg class="w-4 h-4 transition group-open:rotate-45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+      Paste a LinkedIn activity
+    </summary>
+    <form method="post" action="/person/{{ person.slug }}/activity" class="mt-3 space-y-2.5 bg-[#FAFAFB] border border-[#EFEFF2] rounded-xl p-3.5">
+      <div class="flex flex-wrap gap-2.5">
+        <label class="flex-1 min-w-[130px]">
+          <span class="block text-[11px] text-ink-faint mb-1">Type</span>
+          <select name="activity_type" class="w-full h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+            <option value="post">Post</option>
+            <option value="repost">Repost</option>
+            <option value="comment">Comment</option>
+            <option value="tagged">Tagged</option>
+          </select>
+        </label>
+        <label class="flex-1 min-w-[130px]">
+          <span class="block text-[11px] text-ink-faint mb-1">Date on the post</span>
+          <input type="date" name="activity_date" class="w-full h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+        </label>
+      </div>
+      <label class="block">
+        <span class="block text-[11px] text-ink-faint mb-1">Link</span>
+        <input name="url" placeholder="https://www.linkedin.com/posts/…" class="w-full h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+      </label>
+      <label class="block">
+        <span class="block text-[11px] text-ink-faint mb-1">Text of the post or comment <span class="text-ink-faint/70">— this is what the interest chips are derived from</span></span>
+        <textarea name="text" required rows="3" placeholder="Paste what they actually wrote…" class="w-full px-2.5 py-2 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300 resize-y"></textarea>
+      </label>
+      <button class="h-9 px-4 rounded-lg bg-violet2-600 hover:bg-violet2-700 text-white text-[13px] font-semibold">Add activity</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endmacro %}
+
+
+{# ----------------------------------------------------- top 5 web panel #}
+{% macro web_panel(person) %}
+{% set kind_tint = {
+  'article':'bg-sky-50 text-sky-700 border-sky-100',
+  'interview':'bg-violet2-50 text-violet2-700 border-violet2-200',
+  'event':'bg-amber-50 text-amber-700 border-amber-100',
+  'news':'bg-emerald-50 text-emerald-700 border-emerald-100',
+  'profile':'bg-[#F4F4F6] text-ink-soft border-[#E6E7EB]' } %}
+<section class="card shadow-card p-5">
+  <div class="flex items-start justify-between gap-3 mb-3.5">
+    <div class="flex items-start gap-2.5">
+      <svg class="w-[19px] h-[19px] text-teal-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+      <div>
+        <h3 class="text-[15px] font-bold leading-tight">Top 5 Google / Web Activity</h3>
+        <p class="text-[11.5px] text-ink-faint mt-0.5">Automated — searched, not scraped. LinkedIn is excluded; it has its own panel</p>
+      </div>
+    </div>
+    <span class="text-[11px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2.5 py-1 shrink-0">{{ person.findings|length }} found</span>
+  </div>
+
+  {% if person.findings %}
+  <ol class="space-y-2.5">
+    {% for f in person.findings[:5] %}
+    <li class="flex gap-3">
+      <span class="text-[12px] font-semibold text-ink-faint w-3.5 shrink-0 pt-0.5">{{ loop.index }}</span>
+      <div class="min-w-0 flex-1 pb-2.5 border-b border-[#F2F2F5] last:border-0">
+        <a href="{{ f.url }}" target="_blank" rel="noopener" class="text-[13.5px] font-medium leading-snug hover:text-brand-600 hover:underline">{{ f.title }}</a>
+        <div class="flex items-center gap-2 mt-1 flex-wrap">
+          <span class="text-[10px] font-semibold uppercase tracking-wide border rounded px-1.5 py-0.5 {{ kind_tint.get(f.kind, kind_tint['profile']) }}">{{ f.kind }}</span>
+          {% if f.corroborated %}
+          <span class="text-[10px] font-semibold uppercase tracking-wide border rounded px-1.5 py-0.5 bg-emerald-50 border-emerald-100 text-emerald-700 cursor-help"
+                title="Confirmed as this person — {{ f.corroboration }}. Used for interest chips.">confirmed</span>
+          {% else %}
+          <span class="text-[10px] font-semibold uppercase tracking-wide border rounded px-1.5 py-0.5 bg-amber-50 border-amber-100 text-amber-800 cursor-help"
+                title="A search for this name returned it, but nothing ties it to this particular person — it may be a namesake. Not used for interest chips.">identity unconfirmed</span>
+          {% endif %}
+          <span class="text-[11px] text-ink-faint">{{ f.url|domain }}</span>
+          {% if f.published_date %}<span class="text-[11px] text-ink-faint">· {{ f.published_date|relative_time }}</span>
+          {% else %}<span class="text-[11px] text-ink-faint/70">· no date given by the source</span>{% endif %}
+        </div>
+        {% if f.snippet %}<p class="text-[12.5px] text-ink-soft leading-relaxed mt-1.5">{{ f.clean_snippet or f.snippet }}</p>{% endif %}
+        {{ source_tag(f.url, f.fetched_at,
+                      verb='Verified' if f.corroborated else 'Fetched',
+                      muted=not f.corroborated) }}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
+    <svg class="w-7 h-7 mx-auto text-ink-faint/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <p class="text-[13px] font-medium mt-2">Nothing found on the web</p>
+    <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Searched, and nothing came back that could be tied to this person — a result has to be on the company's site, or name them alongside their title and employer. linkedin.com is excluded here on purpose: it belongs to the LinkedIn Activity panel. Namesakes are discarded rather than shown with a caveat. Common for mid-level roles; not a failed run.</p>
+  </div>
+  {% endif %}
+</section>
+{% endmacro %}
+
+
+{# --------------------------------------------------------- company card #}
+{% macro company_card(company, compact=False) %}
+<div class="card shadow-card p-5">
+  <div class="flex items-center gap-2 mb-3">
+    <svg class="w-[17px] h-[17px] text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 21V7l8-4 8 4v14M9 21v-6h6v6"/></svg>
+    <h3 class="text-[15px] font-bold">Company Profile — {{ company.name }}</h3>
+  </div>
+
+  <div class="flex flex-col sm:flex-row gap-4">
+    {# Company logos aren't in the CSV. A favicon is the honest, licence-safe
+       stand-in for a stock building photo. #}
+    <div class="sm:w-[104px] shrink-0">
+      <div class="aspect-square rounded-xl bg-[#FAFAFB] border border-[#EFEFF2] grid place-items-center overflow-hidden">
+        {% if company.domain %}
+        <img src="https://www.google.com/s2/favicons?domain={{ company.domain }}&sz=64"
+             alt="" class="w-10 h-10" loading="lazy"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+        <span class="hidden text-2xl font-bold text-ink-faint">{{ company.name[:1] }}</span>
+        {% else %}
+        <span class="text-2xl font-bold text-ink-faint">{{ company.name[:1] }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="min-w-0 flex-1">
+      <h4 class="text-[12.5px] font-semibold text-ink-soft">What they do</h4>
+      {% if company.description %}
+        <p class="text-[13.5px] leading-relaxed mt-1">{{ company.clean_description or company.description }}</p>
+        {{ source_tag(company.description_source_url, company.description_fetched_at) }}
+      {% else %}
+        <p class="text-[13px] text-ink-faint italic mt-1">Not researched yet — the CSV gives the industry but not a description. This is the Company Research step.</p>
+      {% endif %}
+
+      <dl class="grid lg:grid-cols-2 gap-x-5 gap-y-1.5 mt-3.5 text-[12.5px]">
+        {% if company.industry %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[76px] shrink-0">Industry</dt><dd class="capitalize min-w-0">{{ company.industry }}</dd></div>{% endif %}
+        {% if company.location %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[76px] shrink-0">HQ</dt><dd class="min-w-0">{{ company.location }}</dd></div>{% endif %}
+        {% if company.employees %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[76px] shrink-0">Employees</dt><dd class="min-w-0">{{ '{:,}'.format(company.employees) }}</dd></div>{% endif %}
+        {% if company.annual_revenue %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[76px] shrink-0">Revenue</dt><dd class="min-w-0">{{ company.annual_revenue|money }}</dd></div>{% endif %}
+        {% if company.website %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[76px] shrink-0">Website</dt><dd class="min-w-0"><a href="{{ company.website }}" target="_blank" rel="noopener" class="text-violet2-600 hover:underline break-all">{{ company.domain }}</a></dd></div>{% endif %}
+        {% if company.linkedin_url %}<div class="flex gap-2 min-w-0"><dt class="text-ink-faint w-[76px] shrink-0">LinkedIn</dt><dd class="min-w-0"><a href="{{ company.linkedin_url }}" target="_blank" rel="noopener" class="text-[#0A66C2] hover:underline">company page</a></dd></div>{% endif %}
+      </dl>
+
+      {% if company.keyword_list and not compact %}
+      <div class="flex flex-wrap gap-1.5 mt-3.5">
+        {% for k in company.keyword_list[:6] %}
+        <span class="text-[11px] px-2 py-0.5 rounded-full bg-[#F4F4F6] border border-[#EAEBEF] text-ink-soft">{{ k }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+
+{# ------------------------------------------------------- workflow strip #}
+{% macro opportunities_panel(person) %}
+{% set rows = person.opportunities %}
+{% set icons = {
+  'ai':       'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
+  'video':    'M23 7l-7 5 7 5V7zM1 5h15v14H1z',
+  'software': 'm8 6-6 6 6 6M16 6l6 6-6 6',
+  'learning': 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z' } %}
+<section class="card shadow-card p-5">
+  <div class="flex items-start justify-between gap-3 mb-3.5">
+    <div class="flex items-start gap-2.5">
+      <svg class="w-[19px] h-[19px] text-brand-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>
+      <div class="min-w-0">
+        <h3 class="text-[15px] font-bold leading-tight">Opportunities for Screwdriver</h3>
+        <p class="text-[11.5px] text-ink-faint mt-0.5">What Screwdriver can offer {{ person.company.name if person.company else 'their team' }} — each one tied to something on this record, never inferred</p>
+      </div>
+    </div>
+    <span class="text-[11px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2.5 py-1 shrink-0">{{ rows|length }} / 4</span>
+  </div>
+
+  {% if rows %}
+  <ol class="space-y-2.5">
+    {% for o in rows %}
+    <li class="flex gap-3 group">
+      <span class="grid place-items-center w-7 h-7 rounded-lg shrink-0 mt-0.5
+        {% if o.tier == 'said' %}bg-emerald-50 text-emerald-700{% elif o.tier == 'role' %}bg-violet2-50 text-violet2-600{% else %}bg-amber-50 text-amber-600{% endif %}">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="{{ icons.get(o.key, icons['software']) }}"/></svg>
+      </span>
+      <div class="min-w-0 flex-1 pb-2.5 border-b border-[#F2F2F5] group-last:border-0 group-last:pb-0">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="text-[10px] font-semibold uppercase tracking-wide
+            {% if o.tier == 'said' %}text-emerald-700{% elif o.tier == 'role' %}text-violet2-600{% else %}text-amber-600{% endif %}">{{ o.label }}</span>
+          <span class="text-[10px] font-semibold uppercase tracking-wide rounded px-1.5 py-0.5 cursor-help
+            {% if o.tier == 'said' %}bg-emerald-50 border border-emerald-100 text-emerald-700
+            {% elif o.tier == 'role' %}bg-violet2-50 border border-violet2-100 text-violet2-600
+            {% else %}bg-amber-50 border border-amber-100 text-amber-800{% endif %}"
+            title="{{ o.tier_note }} — the term that matched was &quot;{{ o.term }}&quot;">{{ o.tier_label }}</span>
+        </div>
+        <p class="text-[13px] leading-relaxed mt-0.5">{{ o.offer }}</p>
+        <p class="text-[11.5px] text-ink-faint mt-1">{{ o.because }}</p>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="mt-3 text-[11px] text-ink-faint">Ordered by how directly the evidence is about this person: what they said, then their
+    role, then their employer. Nothing is padded to reach four.</p>
+  {% else %}
+  <div class="flex items-start gap-2.5 text-[13px]">
+    <svg class="w-4 h-4 text-ink-faint shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+    <div>
+      <p class="font-medium">Nothing on this record points at a Screwdriver capability yet.</p>
+      <p class="text-ink-soft mt-0.5 text-[12.5px]">Rather than pitch all four at everybody, this panel stays empty until the
+        designation, the company record or the person's own posts give it something to point at. Research this contact and it fills in.</p>
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endmacro %}
+
+
+{# ------------------------------------------------------- outreach #}
+
+{% macro outreach_state_badge(step) %}
+{% set styles = {
+  'overdue': 'bg-rose-50 border-rose-100 text-rose-700',
+  'due':     'bg-brand-50 border-brand-200 text-brand-700',
+  'waiting': 'bg-[#F4F4F6] border-[#EAEBEF] text-ink-faint',
+  'done':    'bg-emerald-50 border-emerald-100 text-emerald-700',
+  'skipped': 'bg-amber-50 border-amber-100 text-amber-800' } %}
+{% set labels = {
+  'overdue': 'overdue', 'due': 'due now', 'waiting': 'waiting',
+  'done': 'done', 'skipped': 'skipped' } %}
+<span class="text-[10px] font-semibold uppercase tracking-wide rounded px-1.5 py-0.5 border shrink-0
+             {{ styles.get(step.state, styles['waiting']) }}">{{ labels.get(step.state, step.state) }}</span>
+{% endmacro %}
+
+
+{% macro outreach_due_phrase(step) %}
+{%- set d = step.days_until_due -%}
+{%- if d is none -%}no date
+{%- elif d < -1 -%}{{ -d }} days overdue
+{%- elif d == -1 -%}1 day overdue
+{%- elif d == 0 -%}due today
+{%- elif d == 1 -%}due tomorrow
+{%- else -%}due in {{ d }} days
+{%- endif -%}
+{% endmacro %}
+
+
+{# One actionable task. Used on the Outreach board and on a person's page, so
+   the two can never disagree about what a step offers. `back` is where the
+   forms return to; main._safe_back rejects anything that leaves the app. #}
+{% macro outreach_task_row(step, back='/outreach#today', show_person=True) %}
+<li class="flex gap-3 group">
+  <span class="grid place-items-center w-7 h-7 rounded-lg shrink-0 mt-0.5
+    {% if step.state == 'overdue' %}bg-rose-50 text-rose-700{% elif step.state == 'due' %}bg-brand-50 text-brand-700{% else %}bg-[#F4F4F6] text-ink-faint{% endif %}">
+    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+  </span>
+
+  <div class="min-w-0 flex-1 pb-3 border-b border-[#F2F2F5] group-last:border-0 group-last:pb-0">
+    <div class="flex items-center gap-2 flex-wrap">
+      {{ outreach_state_badge(step) }}
+      <span class="text-[13.5px] font-medium">{{ step.label }}</span>
+      {% if show_person %}
+      <span class="text-[13px] text-ink-faint">for</span>
+      <a href="/person/{{ step.person.slug }}#outreach" class="text-[13.5px] font-medium hover:text-brand-600 hover:underline">{{ step.person.full_name }}</a>
+      {% if step.person.company %}<span class="text-[12px] text-ink-faint">- {{ step.person.company.name }}</span>{% endif %}
+      {% endif %}
+      <span class="text-[11.5px] text-ink-faint">- {{ outreach_due_phrase(step) }}</span>
+    </div>
+
+    {% if step.hint %}<p class="text-[12.5px] text-ink-faint mt-1">{{ step.hint }}</p>{% endif %}
+
+    {# The step's own target, so the task is one click from actionable. #}
+    <div class="flex items-center gap-3 flex-wrap mt-1.5">
+      {% if step.step_key == 'email' and step.person.email %}
+      <a href="mailto:{{ step.person.email }}" class="text-[11.5px] text-violet2-600 hover:underline">{{ step.person.email }}</a>
+      {% elif step.step_key != 'email' and step.person.linkedin_url %}
+      <a href="{{ step.person.linkedin_url }}" target="_blank" rel="noopener" class="text-[11.5px] text-[#0A66C2] hover:underline">Open their LinkedIn</a>
+      {% endif %}
+    </div>
+
+    {# For a comment step, the drafted comment for their newest post with one.
+       The task is "comment on their post"; without the draft the person still
+       has to go and write it, which is the work this is meant to remove. #}
+    {% if step.step_key in ('comment_1', 'comment_2') %}
+      {% set drafted = step.person.activities|selectattr('suggested_comment')|list %}
+      {% if drafted %}
+      {% set pick = drafted[0] if step.step_key == 'comment_1' else (drafted[1] if drafted|length > 1 else drafted[0]) %}
+      <div class="mt-2 rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5">
+        <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
+          <span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-600">Recommended comment</span>
+          {% if pick.url %}<a href="{{ pick.url }}" target="_blank" rel="noopener" class="text-[10px] text-[#0A66C2] hover:underline">on their {{ pick.type_label|lower }}{% if pick.activity_date %} of {{ pick.activity_date|short_date }}{% endif %}</a>{% endif %}
+          <span class="text-[10px] text-ink-faint">· edit before sending</span>
+        </div>
+        <textarea rows="2" class="w-full resize-y rounded-lg bg-white border border-violet2-100 px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-violet2-200">{{ pick.suggested_comment }}</textarea>
+      </div>
+      {% else %}
+      <p class="text-[11.5px] text-ink-faint mt-2">No comment drafted yet — open
+        <a href="/person/{{ step.person.slug }}#linkedin" class="text-violet2-600 hover:underline">their LinkedIn panel</a>
+        and use “Draft comments”.</p>
+      {% endif %}
+    {% endif %}
+
+    {% if step.blocked_reason %}
+    <p class="text-[12px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2">{{ step.blocked_reason }}</p>
+    {% endif %}
+
+    <div class="flex items-end gap-2 flex-wrap mt-2">
+      <form method="post" action="/outreach/{{ step.id }}/done" class="flex items-end gap-2">
+        <input type="hidden" name="back" value="{{ back }}">
+        <input name="note" placeholder="What you did (optional)"
+               class="h-8 px-2.5 w-[190px] rounded-lg bg-[#F4F4F6] border border-[#EAEBEF] text-[12px] outline-none focus:bg-white focus:border-violet2-200">
+        <button class="h-8 px-3 rounded-lg bg-brand-700 text-white text-[12px] font-medium hover:bg-brand-600">Mark done</button>
+      </form>
+
+      <form method="post" action="/outreach/{{ step.id }}/reschedule" class="flex items-end gap-2">
+        <input type="hidden" name="back" value="{{ back }}">
+        <input type="date" name="due" value="{{ step.due_date }}"
+               class="h-8 px-2 rounded-lg bg-[#F4F4F6] border border-[#EAEBEF] text-[12px] outline-none focus:bg-white focus:border-violet2-200">
+        <button class="h-8 px-2.5 rounded-lg border border-[#EAEBEF] text-[12px] font-medium text-ink-soft hover:bg-[#FAFAFB]">Move</button>
+      </form>
+
+      <form method="post" action="/outreach/{{ step.id }}/skip" class="flex items-end gap-2">
+        <input type="hidden" name="back" value="{{ back }}">
+        <input name="reason" placeholder="Why skip"
+               class="h-8 px-2.5 w-[130px] rounded-lg bg-[#F4F4F6] border border-[#EAEBEF] text-[12px] outline-none focus:bg-white focus:border-violet2-200">
+        <button class="h-8 px-2.5 rounded-lg border border-[#EAEBEF] text-[12px] font-medium text-ink-faint hover:text-rose-600 hover:bg-[#FAFAFB]">Skip</button>
+      </form>
+    </div>
+  </div>
+</li>
+{% endmacro %}
+
+
+{# The whole sequence for one contact, on their own page. #}
+{% macro outreach_panel(person) %}
+{% set open_step = person.outreach_open %}
+<section id="outreach" class="card shadow-card p-5">
+  <div class="flex items-start justify-between gap-3 mb-3.5">
+    <div class="flex items-start gap-2.5">
+      <svg class="w-[19px] h-[19px] text-violet2-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></svg>
+      <div class="min-w-0">
+        <h3 class="text-[15px] font-bold leading-tight">Outreach sequence</h3>
+        <p class="text-[11.5px] text-ink-faint mt-0.5">Comment, wait 2 days, comment, connect, then email 2 days later.
+          Done by hand - one step is open at a time, and finishing it schedules the next.</p>
+      </div>
+    </div>
+    <span class="text-[11px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2.5 py-1 shrink-0">{{ person.outreach_done_count }} / {{ person.outreach_total }}</span>
+  </div>
+
+  {% if not person.outreach_steps %}
+  <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
+    <p class="text-[13px] font-medium">Not approached yet</p>
+    <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Starting the sequence creates the first task -
+      comment on one of their posts - and schedules the rest as you complete them.</p>
+    <form method="post" action="/person/{{ person.slug }}/outreach/start" class="mt-3">
+      <input type="hidden" name="back" value="/person/{{ person.slug }}#outreach">
+      <button class="text-[12.5px] font-medium px-3.5 py-2 rounded-lg bg-brand-700 text-white hover:bg-brand-600">Start sequence</button>
+    </form>
+  </div>
+  {% else %}
+
+  {# Closed steps, as a trail of what actually happened and when. #}
+  <ol class="space-y-2 mb-3">
+    {% for step in person.outreach_steps %}
+    {% if not step.is_open %}
+    <li class="flex items-start gap-2.5 text-[13px]">
+      {{ outreach_state_badge(step) }}
+      <div class="min-w-0">
+        <span class="font-medium">{{ step.label }}</span>
+        <span class="text-[11.5px] text-ink-faint">
+          {%- if step.done_at %} - {{ step.done_at|short_date }}{% elif step.skipped_at %} - skipped {{ step.skipped_at|short_date }}{% endif -%}
+        </span>
+        {% if step.note %}<p class="text-[12.5px] text-ink-soft mt-0.5">{{ step.note }}</p>{% endif %}
+        {% if step.skip_reason %}<p class="text-[12.5px] text-amber-800 mt-0.5">Skipped: {{ step.skip_reason }}</p>{% endif %}
+      </div>
+    </li>
+    {% endif %}
+    {% endfor %}
+  </ol>
+
+  {% if open_step %}
+  <ol class="pt-3 border-t border-[#F2F2F5]">
+    {{ outreach_task_row(open_step, back='/person/' ~ person.slug ~ '#outreach', show_person=False) }}
+  </ol>
+  {% else %}
+  <p class="pt-3 border-t border-[#F2F2F5] text-[13px] text-emerald-700">Sequence complete - every step closed.</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endmacro %}
+
+
+
+{% macro workflow_strip(active=None) %}
+{% set steps = [
+  ('upload','CSV Upload','M12 16V4m0 0L8 8m4-4l4 4M4 20h16'),
+  ('parse','Data Parsing &amp; Normalization','M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7'),
+  ('enrich','Missing Data Enrichment','M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5M15.5 15.5L18 18'),
+  ('linkedin','LinkedIn Activity (pasted)','M6 9v9M6 6v.01M11 18v-5a2 2 0 0 1 4 0v5M11 18v-9'),
+  ('web','Google / Web Research','M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a15 15 0 0 1 0 18'),
+  ('interest','Interest Detection','M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z'),
+  ('company','Company Research','M4 21V7l8-4 8 4v14M9 21v-6h6v6'),
+  ('dashboard','Dashboard','M4 5h16v6H4zM4 15h7v4H4zM15 15h5v4h-5z'),
+  ('reports','Reports &amp; Export','M4 20h16M7 16V9m5 7V5m5 11v-5'),
+] %}
+<section class="card shadow-card p-5">
+  <div class="flex items-center gap-2 mb-4">
+    <svg class="w-[17px] h-[17px] text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+    <h3 class="text-[15px] font-bold">The 9-step pipeline</h3>
+    <span class="text-[11px] text-ink-faint">— step 9 is Reports &amp; Export, the one the mockup's strip was missing</span>
+  </div>
+  <div class="flex items-stretch gap-1.5 overflow-x-auto pb-1">
+    {% for key, label, path in steps %}
+    <div class="flex items-center gap-1.5 shrink-0">
+      <div class="w-[92px] px-2 py-2.5 rounded-xl border text-center
+        {% if key == active %}bg-brand-50 border-brand-200{% else %}bg-[#FAFAFB] border-[#EFEFF2]{% endif %}">
+        <svg class="w-4 h-4 mx-auto {% if key == active %}text-brand-600{% else %}text-ink-faint{% endif %}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{ path }}"/></svg>
+        <p class="text-[10px] leading-tight mt-1.5 {% if key == active %}font-semibold text-brand-700{% else %}text-ink-soft{% endif %}">{{ label|safe }}</p>
+      </div>
+      {% if not loop.last %}
+      <svg class="w-3 h-3 text-ink-faint/50 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 18 6-6-6-6"/></svg>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endmacro %}

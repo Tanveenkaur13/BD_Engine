@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}{{ company.name }} — PeopleIntel{% endblock %}
+
+{% block content %}
+<div class="max-w-[980px] mx-auto space-y-4">
+  <div class="flex items-center gap-2.5">
+    <a href="/companies" class="grid place-items-center w-8 h-8 rounded-lg border border-[#EAEBEF] bg-white hover:bg-[#F4F4F6] text-ink-soft">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+    </a>
+    <span class="text-[11px] uppercase tracking-wider text-ink-faint">Company Profile</span>
+  </div>
+
+  {{ ui.company_card(company) }}
+
+  {% if company.technologies %}
+  <section class="card shadow-card p-5">
+    <h3 class="text-[15px] font-bold mb-2.5">Technologies <span class="text-[11.5px] font-normal text-ink-faint">— from the CSV</span></h3>
+    <div class="flex flex-wrap gap-1.5">
+      {% for t in company.technologies.split(',')[:40] %}
+      <span class="text-[11px] px-2 py-0.5 rounded-full bg-[#F4F4F6] border border-[#EAEBEF] text-ink-soft">{{ t.strip() }}</span>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="card shadow-card overflow-hidden">
+    <div class="px-5 pt-5 pb-3.5">
+      <h3 class="text-[15px] font-bold">Contacts at {{ company.name }}</h3>
+    </div>
+    {{ ui.people_table(company.people, link_full=True) }}
+  </section>
+</div>
+{% endblock %}

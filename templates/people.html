@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}People — PeopleIntel{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto space-y-4">
+  <div class="flex items-end justify-between gap-4 flex-wrap">
+    <div>
+      <h1 class="text-[22px] font-bold tracking-tight">People</h1>
+      <p class="text-[13px] text-ink-faint mt-0.5">{{ people|length }} contact{{ 's' if people|length != 1 }}{% if q %} matching “{{ q }}”{% endif %}</p>
+    </div>
+    <form method="get" class="flex gap-2 flex-wrap">
+      <input name="q" value="{{ q }}" placeholder="Name, title, company, email…"
+             class="h-9 px-3 rounded-lg border border-[#E2E3E8] bg-white text-[13px] w-[240px] outline-none focus:border-violet2-300">
+      <select name="status" class="h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+        <option value="">All statuses</option>
+        <option value="complete" {{ 'selected' if status == 'complete' }}>Complete</option>
+        <option value="needs_enrichment" {{ 'selected' if status == 'needs_enrichment' }}>Needs Enrichment</option>
+        <option value="failed" {{ 'selected' if status == 'failed' }}>Failed</option>
+      </select>
+      <button class="h-9 px-4 rounded-lg bg-brand-700 hover:bg-brand-600 text-white text-[13px] font-semibold">Filter</button>
+      {% if q or status %}<a href="/people" class="h-9 px-3 grid place-items-center rounded-lg border border-[#E2E3E8] text-[13px] text-ink-soft hover:bg-white">Clear</a>{% endif %}
+    </form>
+  </div>
+
+  <section class="card shadow-card overflow-hidden">
+    {{ ui.people_table(people, link_full=True) }}
+  </section>
+</div>
+{% endblock %}

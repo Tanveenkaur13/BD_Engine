@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}{{ person.full_name }} — PeopleIntel{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto space-y-4">
+
+  <div class="flex items-center gap-2.5">
+    <a href="/people" class="grid place-items-center w-8 h-8 rounded-lg border border-[#EAEBEF] bg-white hover:bg-[#F4F4F6] text-ink-soft">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+    </a>
+    <span class="text-[11px] uppercase tracking-wider text-ink-faint">Person Profile</span>
+  </div>
+
+  {{ ui.person_head(person) }}
+  {{ ui.summary_panel(person) }}
+  {{ ui.interests_panel(person) }}
+
+  <div class="grid lg:grid-cols-2 gap-4 items-start">
+    {{ ui.linkedin_panel(person, allow_add=True, error=activity_error) }}
+    {{ ui.web_panel(person) }}
+  </div>
+
+  {% if person.company %}
+    {{ ui.company_card(person.company) }}
+  {% endif %}
+
+  {# ------------------------------------------------- data completeness #}
+  <section class="card shadow-card p-5">
+    <h3 class="text-[15px] font-bold mb-3">What's still missing</h3>
+    {% set gaps = person.missing_critical() %}
+    {% set optional = person.missing_optional() %}
+    {% if gaps %}
+      <ul class="grid sm:grid-cols-2 gap-y-1.5 gap-x-6">
+        {% for g in gaps %}
+        <li class="flex items-center gap-2 text-[13px] min-w-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"></span>
+          <span class="capitalize min-w-0">{{ g }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-[13px] text-emerald-700">Identity complete — email, LinkedIn, designation and company site are all on file.</p>
+    {% endif %}
+    {% if optional %}
+      <ul class="grid sm:grid-cols-2 gap-y-1.5 gap-x-6 mt-2.5 pt-2.5 border-t border-[#F2F2F5]">
+        {% for g in optional %}
+        <li class="flex items-center gap-2 text-[13px] text-ink-faint min-w-0">
+          <span class="w-1.5 h-1.5 rounded-full bg-[#DEDFE4] shrink-0"></span>
+          <span class="capitalize min-w-0">{{ g }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="text-[11.5px] text-ink-faint mt-2">These don't hold the contact at Needs Enrichment.</p>
+    {% endif %}
+
+    {# Why automatic enrichment could not close a gap. resolve.py records this
+       so a blank field reads as a checked dead end rather than an untried one:
+       "no company domain on file", "3 profiles match — ambiguous". Without it
+       the reader cannot tell a gap nobody looked at from one that was searched
+       and honestly came back empty. #}
+    {% if person.identity_note %}
+    <div class="mt-2.5 pt-2.5 border-t border-[#F2F2F5] flex items-start gap-2.5">
+      <span class="w-1.5 h-1.5 rounded-full bg-violet2-600 shrink-0 mt-1.5"></span>
+      <div class="min-w-0">
+        <p class="text-[12.5px] font-medium">Automatic enrichment ran and could not confirm a value</p>
+        <p class="text-[12.5px] text-ink-soft mt-0.5">{{ person.identity_note }}</p>
+        <p class="text-[11px] text-ink-faint mt-1">Nothing is written unless it verifies, so an unconfirmed
+          or ambiguous candidate is discarded rather than shown with a caveat.</p>
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  {{ ui.outreach_panel(person) }}
+
+  {{ ui.opportunities_panel(person) }}
+</div>
+{% endblock %}

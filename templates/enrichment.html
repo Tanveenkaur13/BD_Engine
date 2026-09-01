@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}Enrichment — PeopleIntel{% endblock %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto space-y-4">
+  <div>
+    <h1 class="text-[22px] font-bold tracking-tight">Enrichment</h1>
+    <p class="text-[13px] text-ink-faint mt-0.5">What each contact is still missing, worst first. The gap-filling rule: if one identifier is present and another isn't, go find the missing one.</p>
+  </div>
+
+  {{ ui.stat_tiles(stats) }}
+
+  <div class="grid sm:grid-cols-3 gap-3.5">
+    <div class="card shadow-card p-4">
+      <p class="text-[11.5px] text-ink-faint">Direct phone</p>
+      <p class="text-xl font-bold mt-1">{{ stats.no_direct_phone }} / {{ stats.total }}</p>
+      <p class="text-[12px] text-ink-soft mt-1">missing. The Apollo export carries only the company switchboard — direct lines need a paid waterfall enrichment.</p>
+    </div>
+    <div class="card shadow-card p-4">
+      <p class="text-[11.5px] text-ink-faint">LinkedIn activity</p>
+      <p class="text-xl font-bold mt-1">{{ stats.with_activities }} / {{ stats.total }}</p>
+      <p class="text-[12px] text-ink-soft mt-1">have at least one pasted activity. Added by hand — this tool never crawls LinkedIn.</p>
+    </div>
+    <div class="card shadow-card p-4">
+      <p class="text-[11.5px] text-ink-faint">Web research</p>
+      <p class="text-xl font-bold mt-1">{{ stats.with_findings }} / {{ stats.total }}</p>
+      <p class="text-[12px] text-ink-soft mt-1">have web findings on file. Automated via search.</p>
+    </div>
+  </div>
+
+  <section class="card shadow-card overflow-hidden">
+    <div class="overflow-x-auto">
+    <table class="w-full text-left" style="min-width:640px">
+      <thead>
+        <tr class="text-[10.5px] uppercase tracking-wider text-ink-faint bg-[#FAFAFB]">
+          <th class="font-medium px-4 py-2.5">Person</th>
+          <th class="font-medium px-4 py-2.5">Company</th>
+          <th class="font-medium px-4 py-2.5">Gaps</th>
+          <th class="font-medium px-4 py-2.5 text-right">Count</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr class="border-t border-[#EFEFF2] hover:bg-[#FAFAFB]">
+          <td class="px-4 py-3">
+            <a href="/person/{{ r.person.slug }}" class="flex items-center gap-2.5 group">
+              {{ ui.avatar(r.person, 'w-8 h-8 text-[11px]') }}
+              <span class="text-[13.5px] font-medium group-hover:text-brand-600">{{ r.person.full_name }}</span>
+            </a>
+          </td>
+          <td class="px-4 py-3 text-[13px] text-ink-soft">{{ r.person.company.name if r.person.company else '—' }}</td>
+          <td class="px-4 py-3">
+            {% if r.gaps %}
+            <div class="flex flex-wrap gap-1.5">
+              {% for g in r.gaps %}
+              <span class="text-[10.5px] px-2 py-0.5 rounded-full bg-amber-50 border border-amber-100 text-amber-700 capitalize">{{ g }}</span>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="text-[12px] text-emerald-700">identity complete</span>
+            {% endif %}
+            {% if r.optional %}
+            <div class="flex flex-wrap gap-1.5 mt-1.5">
+              {% for g in r.optional %}
+              <span class="text-[10.5px] px-2 py-0.5 rounded-full bg-[#F4F4F6] border border-[#EAEBEF] text-ink-faint">{{ g }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-right text-[13px] font-semibold {{ 'text-amber-700' if r.gaps else 'text-emerald-700' }}">{{ r.gaps|length }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  {{ ui.workflow_strip('enrich') }}
+</div>
+{% endblock %}

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}PeopleIntel{% endblock %}</title>
+
+<!-- Prebuilt stylesheet. Tailwind's CLI produced this at build time; the running
+     app serves a plain CSS file and needs no CDN, no JS framework and no Node. -->
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#D6D9DE;border-radius:9px}
+
+  /* The nav strip under the search bar. Written as plain CSS because the
+     prebuilt Tailwind sheet has no top-16, z-20 or whitespace-nowrap — they
+     were purged as unused, and this project has no Node build to add them. */
+  .subnav{position:sticky;top:4rem;z-index:20}
+  .subnav-scroll{overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
+  .subnav-scroll::-webkit-scrollbar{display:none}   /* a 9px bar in a 56px strip */
+  .subnav-scroll>a{white-space:nowrap}
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- ---------------------------------------------------------- top bar -->
+<header class="sticky top-0 z-30 flex items-center gap-4 px-5 h-16 bg-white border-b border-[#EAEBEF]">
+  <a href="/" class="flex items-center gap-3 shrink-0 w-[172px]">
+    <span class="grid place-items-center w-9 h-9 rounded-lg bg-brand-700 text-white font-bold text-lg">S</span>
+    <span class="leading-none">
+      <span class="block font-bold text-[17px] tracking-tight">PeopleIntel</span>
+      <span class="block text-[10px] text-ink-faint mt-0.5 tracking-wide">Company · Designation · Person</span>
+    </span>
+  </a>
+
+  <form action="/people" method="get" class="flex-1 max-w-2xl mx-auto">
+    <div class="relative">
+      <svg class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input name="q" value="{{ q|default('') }}" placeholder="Search people, companies…"
+             class="w-full h-10 pl-10 pr-4 rounded-full bg-[#F4F4F6] border border-[#EAEBEF] text-sm outline-none focus:bg-white focus:border-violet2-200 focus:ring-2 focus:ring-violet2-100">
+    </div>
+  </form>
+
+  <div class="flex items-center gap-3 shrink-0">
+    {# Counts open outreach steps due today or earlier, overdue included — a
+       task that slipped is still today's task. Resolved once in main.ctx() so
+       every page shows the same number. The count sits beside the bell rather
+       than as an overlapping badge because the prebuilt stylesheet ships no
+       negative-inset utilities and cannot be regenerated without Node. #}
+    <a href="/outreach?view=today"
+       title="{{ pending_today|length }} outreach task(s) due today or overdue"
+       class="flex items-center gap-1.5 h-9 px-2 rounded-full hover:bg-[#F4F4F6] text-ink-soft">
+      <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      {% if pending_today %}
+      <span class="grid place-items-center w-5 h-5 rounded-full bg-brand-700 text-white text-[10px] font-bold leading-none">{{ pending_today|length }}</span>
+      {% endif %}
+    </a>
+    <div class="flex items-center gap-2.5">
+      <span class="grid place-items-center w-8 h-8 rounded-full bg-brand-100 text-brand-700 text-xs font-semibold">RG</span>
+      <span class="leading-tight hidden sm:block">
+        <span class="block text-[13px] font-semibold">Rahul Goenka</span>
+        <span class="block text-[11px] text-ink-faint">Admin</span>
+      </span>
+    </div>
+  </div>
+</header>
+
+<!-- ------------------------------------------------- primary navigation -->
+<!-- Was a 196px left sidebar. Moved under the search bar so the content area
+     gets the full window width; it scrolls sideways instead of disappearing on
+     a narrow screen, which the sidebar did at md. -->
+<nav class="subnav bg-white border-b border-[#EAEBEF]">
+    {% set items = [
+      ('home','/','Home','M3 11l9-8 9 8M5 10v10h14V10'),
+      ('upload','/upload','CSV Upload','M12 16V4m0 0L8 8m4-4l4 4M4 20h16'),
+      ('people','/people','People','M16 20v-2a4 4 0 0 0-8 0v2M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8'),
+      ('companies','/companies','Companies','M4 21V7l8-4 8 4v14M9 21v-6h6v6'),
+      ('enrichment','/enrichment','Enrichment','M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5M15.5 15.5L18 18M18 6l-2.5 2.5M8.5 15.5L6 18'),
+      ('research','/research','Research','M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3'),
+      ('outreach','/outreach','Outreach','M22 2 11 13M22 2l-7 20-4-9-9-4z'),
+      ('reports','/reports','Reports','M4 20h16M7 16V9m5 7V5m5 11v-5'),
+      ('settings','/settings','Settings','M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 11 4.6a2 2 0 1 1 4 0A1.7 1.7 0 0 0 17.9 5.8l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z'),
+    ] %}
+  <div class="subnav-scroll flex items-center gap-2 px-5 py-2">
+    {% for key, href, label, path in items %}
+    <a href="{{ href }}" class="flex items-center gap-2 px-3 h-10 rounded-xl text-[13.5px] font-medium transition shrink-0
+      {% if nav == key %}bg-brand-700 text-white shadow-sm{% else %}text-ink-soft hover:bg-[#F4F4F6]{% endif %}">
+      <svg class="w-[17px] h-[17px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="{{ path }}"/></svg>
+      {{ label }}
+    </a>
+    {% endfor %}
+  </div>
+</nav>
+
+<main class="min-w-0 p-4 lg:p-6">
+  {% block content %}{% endblock %}
+</main>
+
+</body>
+</html>

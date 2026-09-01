@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% import "_partials.html" as ui %}
+{% block title %}PeopleIntel — Home{% endblock %}
+
+{% block content %}
+<div class="grid xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)] gap-4">
+
+  <!-- ============================================ left column -->
+  <div class="space-y-4 min-w-0">
+
+    <section class="card shadow-card p-4">
+      <div class="flex items-center gap-2 mb-3">
+        <svg class="w-[17px] h-[17px] text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
+        <h3 class="text-[15px] font-bold">CSV Upload &amp; Processing</h3>
+      </div>
+
+      <form action="/upload" method="post" enctype="multipart/form-data" class="flex flex-col sm:flex-row gap-2.5 mb-3">
+        <label class="flex-1 flex items-center justify-center gap-2.5 h-11 rounded-xl border-2 border-dashed border-violet2-200 bg-violet2-50/50 cursor-pointer hover:bg-violet2-50 transition">
+          <span class="grid place-items-center w-9 h-9 rounded-lg bg-violet2-100 text-violet2-600 shrink-0">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
+          </span>
+          <span class="text-center">
+            <span class="block text-[13px] font-semibold text-violet2-700">Drop your CSV file here</span>
+            <span class="block text-[11.5px] text-ink-faint">or click to upload</span>
+          </span>
+          <input type="file" name="file" accept=".csv,.tsv" class="hidden" onchange="this.form.submit()">
+        </label>
+        <button class="h-11 sm:w-[118px] px-4 rounded-xl bg-violet2-600 hover:bg-violet2-700 text-white text-[13px] font-semibold shrink-0">Upload CSV</button>
+      </form>
+
+      {{ ui.stat_rows(stats) }}
+
+      <div class="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-faint">
+        <span>{{ stats.companies }} companies</span>
+        <span>·</span>
+        <span>{{ stats.researched }} researched</span>
+        <span>·</span>
+        <span class="text-amber-700">{{ stats.no_direct_phone }} without a direct phone</span>
+        {% if stats.drift %}<span>·</span><span class="text-amber-700">{{ stats.drift }} stale designation{{ 's' if stats.drift != 1 }}</span>{% endif %}
+      </div>
+    </section>
+
+    <section class="card shadow-card overflow-hidden">
+      <div class="flex items-center justify-between gap-3 px-5 pt-5 pb-3.5">
+        <div class="flex items-center gap-2">
+          <svg class="w-[17px] h-[17px] text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M16 20v-2a4 4 0 0 0-8 0v2M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8"/></svg>
+          <h3 class="text-[15px] font-bold">People List</h3>
+        </div>
+        <a href="/people" class="text-[12px] font-medium text-violet2-600 hover:underline">View all {{ total_people }}</a>
+      </div>
+      {{ ui.people_table(people, selected_slug=person.slug if person else None) }}
+    </section>
+
+    {% if person and person.company %}
+      {{ ui.company_card(person.company) }}
+    {% endif %}
+  </div>
+
+  <!-- =========================================== right column -->
+  <div class="space-y-4 min-w-0">
+    {% if person %}
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2.5">
+          <span class="text-[11px] uppercase tracking-wider text-ink-faint">Person Profile</span>
+        </div>
+        <a href="/person/{{ person.slug }}" class="inline-flex items-center gap-1.5 text-[12px] font-medium text-violet2-600 hover:underline">
+          Open full page
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+        </a>
+      </div>
+
+      {{ ui.person_head(person) }}
+      {{ ui.summary_panel(person) }}
+      {{ ui.interests_panel(person) }}
+
+      <div class="grid lg:grid-cols-2 gap-4">
+        {{ ui.linkedin_panel(person, allow_add=False) }}
+        {{ ui.web_panel(person) }}
+      </div>
+    {% else %}
+      <div class="card shadow-card p-10 text-center">
+        <p class="text-[14px] font-medium">No contacts yet</p>
+        <p class="text-[13px] text-ink-faint mt-1">Upload a CSV to get started.</p>
+      </div>
+    {% endif %}
+
+    {{ ui.opportunities_panel(person) }}
+  </div>
+</div>
+{% endblock %}
