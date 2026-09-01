@@ -20,6 +20,7 @@ from .env import status as env_status
 from . import pipeline
 from . import outreach
 from . import messages
+from . import segments
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -162,7 +163,14 @@ def home(request: Request, db: Session = Depends(get_session), selected: str = N
 
 @app.get("/people", response_class=HTMLResponse)
 def people_list(request: Request, db: Session = Depends(get_session),
-                q: str = "", status: str = ""):
+                q: str = "", status: str = "",
+                country: str = "", category: str = ""):
+    """The contact list, narrowed by any combination of four filters.
+
+    q and status are SQL; country and category are applied in Python because
+    both are derived rather than stored (app/segments.py). Either segment filter
+    works alone, and together they intersect.
+    """
     query = people_q(db)
     if q:
         like = f"%{q}%"
@@ -173,9 +181,21 @@ def people_list(request: Request, db: Session = Depends(get_session),
         ))
     if status:
         query = query.filter(Person.enrichment_status == status)
+
+    rows = [p for p in query.all() if segments.matches(p, country, category)]
+
+    # Dropdown options are counted over every contact, not the filtered set, so
+    # the options don't disappear the moment you pick one - a select that
+    # empties itself when used cannot be undone.
+    everyone = people_q(db).all()
+
     return templates.TemplateResponse(
         request, "people.html",
-        ctx(request, db, nav="people", people=query.all(), q=q, status=status),
+        ctx(request, db, nav="people", people=rows, q=q, status=status,
+            country=country, category=category,
+            country_options=segments.country_options(everyone),
+            category_options=segments.category_options(everyone),
+            total_people=len(everyone)),
     )
 
 
@@ -361,7 +381,7 @@ def research_person_now(slug: str, back: str = Form(""),
 
 @app.get("/outreach", response_class=HTMLResponse)
 def outreach_board(request: Request, db: Session = Depends(get_session),
-                   view: str = "today"):
+                   view: str = "today", country: str = "", category: str = ""):
     """The sequence board, one sheet at a time.
 
     Split by outreach_stage rather than by research status — the question this
@@ -376,7 +396,10 @@ def outreach_board(request: Request, db: Session = Depends(get_session),
     """
     if view not in ("today", "new", "active", "done"):
         view = "today"
-    people = people_q(db).all()
+
+    everyone = people_q(db).all()
+    people = [p for p in everyone if segments.matches(p, country, category)]
+
     new = [p for p in people if p.outreach_stage == outreach.STAGE_NEW]
     active = [p for p in people if p.outreach_stage == outreach.STAGE_IN_PROGRESS]
     done = [p for p in people if p.outreach_stage == outreach.STAGE_DONE]
@@ -384,10 +407,22 @@ def outreach_board(request: Request, db: Session = Depends(get_session),
     # work that matters next.
     active.sort(key=lambda p: (p.outreach_open.due_date if p.outreach_open
                                and p.outreach_open.due_date else date.max))
+
+    # The Today sheet is a list of steps, not people, so the same filter is
+    # applied through each step's contact. Kept separate from ctx's
+    # `pending_today`, which the header bell reads: the bell is a count of
+    # everything actually due and must not shrink because a segment is being
+    # viewed, or you could filter your way into believing nothing is owed.
+    due_here = [step for step in outreach.due_steps(db)
+                if segments.matches(step.person, country, category)]
+
     return templates.TemplateResponse(
         request, "outreach.html",
         ctx(request, db, nav="outreach", view=view, new_people=new,
-            active=active, done=done, sequence=outreach.SEQUENCE),
+            active=active, done=done, sequence=outreach.SEQUENCE,
+            due_here=due_here, country=country, category=category,
+            country_options=segments.country_options(everyone),
+            category_options=segments.category_options(everyone)),
     )
 
 
