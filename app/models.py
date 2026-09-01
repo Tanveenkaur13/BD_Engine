@@ -272,6 +272,27 @@ class Person(Base):
         from app.outreach import SEQUENCE
         return len(SEQUENCE)
 
+    # ---- segmenting. Derived on read from the CSV's own fields, never stored,
+    #      so a re-upload or an enrichment run cannot leave a stale segment
+    #      behind. See app/segments.py for how the mapping is decided.
+
+    @property
+    def category(self):
+        """(key, label) - Education, Medical & Health, Engineering, ..."""
+        from app.segments import category_of
+        return category_of(self)
+
+    @property
+    def category_label(self):
+        return self.category[1]
+
+    @property
+    def segment_countries(self):
+        """Every country this contact can be filtered on: theirs, and their
+        employer's. They are different facts and often differ."""
+        from app.segments import countries_of
+        return countries_of(self)
+
     @property
     def opportunities(self):
         """What Screwdriver can offer this contact's employer.

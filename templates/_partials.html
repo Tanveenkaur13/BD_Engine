@@ -113,7 +113,13 @@
 {% endmacro %}
 
 
-{% macro people_table(people, selected_slug=None, link_full=False) %}
+{# The label for a category key, for the "N contacts · Education" line. #}
+{% macro category_label(options, key) %}
+{%- for k, label, n in options %}{% if k == key %}{{ label }}{% endif %}{% endfor -%}
+{% endmacro %}
+
+
+{% macro people_table(people, selected_slug=None, link_full=False, show_segments=False) %}
 <div class="overflow-x-auto">
 <table class="w-full text-left" style="min-width:520px">
   <thead>
@@ -121,6 +127,10 @@
       <th class="font-medium px-4 py-2.5">Person</th>
       <th class="font-medium px-4 py-2.5">Title</th>
       <th class="font-medium px-4 py-2.5">Company</th>
+      {% if show_segments %}
+      <th class="font-medium px-4 py-2.5">Country</th>
+      <th class="font-medium px-4 py-2.5">Category</th>
+      {% endif %}
       <th class="font-medium px-4 py-2.5">Status</th>
     </tr>
   </thead>
@@ -141,6 +151,19 @@
         {% endif %}
       </td>
       <td class="px-4 py-3 text-[13px] text-ink-soft">{{ p.company.name if p.company else '—' }}</td>
+      {% if show_segments %}
+      {# Both countries, labelled, so a country match is never mysterious. #}
+      <td class="px-4 py-3 text-[12.5px] text-ink-soft">
+        {% if p.country %}<span class="block">{{ p.country }}</span>{% endif %}
+        {% if p.company and p.company.country and p.company.country != p.country %}
+        <span class="block text-[11px] text-ink-faint">{{ p.company.country }} <span class="text-ink-faint/70">(employer)</span></span>
+        {% endif %}
+        {% if not p.segment_countries %}—{% endif %}
+      </td>
+      <td class="px-4 py-3">
+        <span class="text-[11px] font-medium text-ink-soft bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2 py-0.5">{{ p.category_label }}</span>
+      </td>
+      {% endif %}
       <td class="px-4 py-3">
         <span class="inline-flex flex-wrap items-center gap-1.5">
           {{ status_badge(p.enrichment_status, p.status_label) }}
@@ -151,7 +174,7 @@
     </tr>
   {% endfor %}
   {% if not people %}
-    <tr><td colspan="4" class="px-4 py-10 text-center text-[13px] text-ink-faint">No contacts match.</td></tr>
+    <tr><td colspan="{{ 6 if show_segments else 4 }}" class="px-4 py-10 text-center text-[13px] text-ink-faint">No contacts match these filters.</td></tr>
   {% endif %}
   </tbody>
 </table>

@@ -4,27 +4,66 @@
 
 {% block content %}
 <div class="max-w-[1180px] mx-auto space-y-4">
+
   <div class="flex items-end justify-between gap-4 flex-wrap">
     <div>
       <h1 class="text-[22px] font-bold tracking-tight">People</h1>
-      <p class="text-[13px] text-ink-faint mt-0.5">{{ people|length }} contact{{ 's' if people|length != 1 }}{% if q %} matching “{{ q }}”{% endif %}</p>
+      <p class="text-[13px] text-ink-faint mt-0.5">
+        {{ people|length }} contact{{ 's' if people|length != 1 }}
+        {%- if people|length != total_people %} of {{ total_people }}{% endif %}
+        {%- if q %} matching “{{ q }}”{% endif %}
+        {%- if country %} · {{ country }}{% endif %}
+        {%- if category %} · {{ ui.category_label(category_options, category) }}{% endif %}
+      </p>
     </div>
-    <form method="get" class="flex gap-2 flex-wrap">
+
+    {# Four filters, all optional and all combinable. Country and category are
+       the two the list is segmented by; either works alone. #}
+    <form method="get" class="flex gap-2 flex-wrap items-center">
       <input name="q" value="{{ q }}" placeholder="Name, title, company, email…"
-             class="h-9 px-3 rounded-lg border border-[#E2E3E8] bg-white text-[13px] w-[240px] outline-none focus:border-violet2-300">
+             class="h-9 px-3 rounded-lg border border-[#E2E3E8] bg-white text-[13px] w-[200px] outline-none focus:border-violet2-300">
+
+      <select name="country" class="h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+        <option value="">All countries</option>
+        {% for name, n in country_options %}
+        <option value="{{ name }}" {{ 'selected' if country|lower == name|lower }}>{{ name }} ({{ n }})</option>
+        {% endfor %}
+      </select>
+
+      <select name="category" class="h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+        <option value="">All categories</option>
+        {% for key, label, n in category_options %}
+        <option value="{{ key }}" {{ 'selected' if category == key }}>{{ label }} ({{ n }})</option>
+        {% endfor %}
+      </select>
+
       <select name="status" class="h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
         <option value="">All statuses</option>
         <option value="complete" {{ 'selected' if status == 'complete' }}>Complete</option>
         <option value="needs_enrichment" {{ 'selected' if status == 'needs_enrichment' }}>Needs Enrichment</option>
         <option value="failed" {{ 'selected' if status == 'failed' }}>Failed</option>
       </select>
+
       <button class="h-9 px-4 rounded-lg bg-brand-700 hover:bg-brand-600 text-white text-[13px] font-semibold">Filter</button>
-      {% if q or status %}<a href="/people" class="h-9 px-3 grid place-items-center rounded-lg border border-[#E2E3E8] text-[13px] text-ink-soft hover:bg-white">Clear</a>{% endif %}
+      {% if q or status or country or category %}
+      <a href="/people" class="h-9 px-3 grid place-items-center rounded-lg border border-[#E2E3E8] text-[13px] text-ink-soft hover:bg-white">Clear</a>
+      {% endif %}
     </form>
   </div>
 
+  {# A contact matches a country when either their own or their employer's
+     matches - they are different facts and frequently differ. That is why the
+     country counts can add up to more than the number of contacts, and saying
+     so here stops the numbers looking wrong. #}
+  <p class="text-[11.5px] text-ink-faint">
+    Country matches the contact's own location <b>or</b> their employer's, so a
+    contact based in one country working for a company in another appears under
+    both. Category is read from the employer's industry — falling back to their
+    keywords, then the contact's title.
+  </p>
+
   <section class="card shadow-card overflow-hidden">
-    {{ ui.people_table(people, link_full=True) }}
+    {{ ui.people_table(people, link_full=True, show_segments=True) }}
   </section>
 </div>
 {% endblock %}

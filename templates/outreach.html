@@ -5,10 +5,42 @@
 {% block content %}
 <div class="max-w-[1180px] mx-auto space-y-4">
 
-  <div>
-    <h1 class="text-[22px] font-bold tracking-tight">Outreach</h1>
-    <p class="text-[13px] text-ink-faint mt-0.5">Comment · wait 2 days · comment · connect · email 2 days later.
-      Every step is done by hand — this tracks where each contact is and what is due.</p>
+  <div class="flex items-end justify-between gap-4 flex-wrap">
+    <div>
+      <h1 class="text-[22px] font-bold tracking-tight">Outreach</h1>
+      <p class="text-[13px] text-ink-faint mt-0.5">Comment · wait 2 days · comment · connect · email 2 days later.
+        Every step is done by hand — this tracks where each contact is and what is due.
+        {%- if country or category %} Showing
+        {%- if country %} {{ country }}{% endif %}
+        {%- if country and category %} ·{% endif %}
+        {%- if category %} {{ ui.category_label(category_options, category) }}{% endif %} only.{% endif %}</p>
+    </div>
+
+    {# The same country / category segmenting as the People list. `view` rides
+       along in a hidden field so filtering keeps you on the sheet you are
+       reading instead of bouncing you back to Today. #}
+    <form method="get" class="flex gap-2 flex-wrap items-center">
+      <input type="hidden" name="view" value="{{ view }}">
+
+      <select name="country" class="h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+        <option value="">All countries</option>
+        {% for name, n in country_options %}
+        <option value="{{ name }}" {{ 'selected' if country|lower == name|lower }}>{{ name }} ({{ n }})</option>
+        {% endfor %}
+      </select>
+
+      <select name="category" class="h-9 px-2.5 rounded-lg border border-[#E2E3E8] bg-white text-[13px] outline-none focus:border-violet2-300">
+        <option value="">All categories</option>
+        {% for key, label, n in category_options %}
+        <option value="{{ key }}" {{ 'selected' if category == key }}>{{ label }} ({{ n }})</option>
+        {% endfor %}
+      </select>
+
+      <button class="h-9 px-4 rounded-lg bg-brand-700 hover:bg-brand-600 text-white text-[13px] font-semibold">Filter</button>
+      {% if country or category %}
+      <a href="/outreach?view={{ view }}" class="h-9 px-3 grid place-items-center rounded-lg border border-[#E2E3E8] text-[13px] text-ink-soft hover:bg-white">Clear</a>
+      {% endif %}
+    </form>
   </div>
 
   {# Sheets rather than one long page: the New list alone fills a screen, which
@@ -16,14 +48,16 @@
      the fold. Each tab carries its own count so the numbers are visible without
      opening the sheet. #}
   {% set sheets = [
-    ('today',  'Due today',        pending_today|length),
+    ('today',  'Due today',        due_here|length),
     ('new',    'New',              new_people|length),
     ('active', 'In progress',      active|length),
     ('done',   'Complete',         done|length),
   ] %}
+  {# Switching sheets must not silently drop the segment you are working in. #}
+  {% set seg = '&country=' ~ (country|urlencode) ~ '&category=' ~ (category|urlencode) %}
   <div class="flex items-center gap-1.5 flex-wrap border-b border-[#EAEBEF] pb-2.5">
     {% for key, label, count in sheets %}
-    <a href="/outreach?view={{ key }}"
+    <a href="/outreach?view={{ key }}{{ seg }}"
        class="flex items-center gap-2 px-3 h-9 rounded-lg text-[13px] font-medium transition
        {% if view == key %}bg-brand-700 text-white shadow-sm{% else %}text-ink-soft hover:bg-[#F4F4F6]{% endif %}">
       {{ label }}
@@ -45,10 +79,10 @@
       </div>
     </div>
 
-    {% if pending_today %}
+    {% if due_here %}
     <ol class="space-y-2.5">
-      {% for step in pending_today %}
-      {{ ui.outreach_task_row(step, back='/outreach?view=today') }}
+      {% for step in due_here %}
+      {{ ui.outreach_task_row(step, back='/outreach?view=today' ~ seg) }}
       {% endfor %}
     </ol>
     {% else %}
@@ -56,7 +90,7 @@
       <svg class="w-7 h-7 mx-auto text-ink-faint/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 6 9 17l-5-5"/></svg>
       <p class="text-[13px] font-medium mt-2">Nothing due today</p>
       <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Either every open step is still waiting out its
-        gap, or nobody is in the sequence yet. Start someone from the <a href="/outreach?view=new" class="text-violet2-600 hover:underline">New</a> sheet.</p>
+        gap, or nobody is in the sequence yet. Start someone from the <a href="/outreach?view=new{{ seg }}" class="text-violet2-600 hover:underline">New</a> sheet.</p>
     </div>
     {% endif %}
   </section>
@@ -85,14 +119,14 @@
           <p class="text-[12px] text-ink-faint truncate">{{ p.title or 'Designation unknown' }}{% if p.company %} · {{ p.company.name }}{% endif %}</p>
         </div>
         <form method="post" action="/person/{{ p.slug }}/outreach/start" class="shrink-0">
-          <input type="hidden" name="back" value="/outreach?view=active">
+          <input type="hidden" name="back" value="/outreach?view=active{{ seg }}">
           <button class="text-[12px] font-medium px-3 py-1.5 rounded-lg bg-brand-700 text-white hover:bg-brand-600">Start sequence</button>
         </form>
       </li>
       {% endfor %}
     </ul>
     <p class="text-[11px] text-ink-faint mt-3">Starting a sequence moves the contact to the
-      <a href="/outreach?view=active" class="text-violet2-600 hover:underline">In progress</a> sheet and creates the
+      <a href="/outreach?view=active{{ seg }}" class="text-violet2-600 hover:underline">In progress</a> sheet and creates the
       first task — comment on one of their posts.</p>
     {% else %}
     <p class="text-[13px] text-ink-faint italic">Everyone has been approached.</p>
@@ -119,7 +153,7 @@
       {% for p in active %}
       {% set step = p.outreach_open %}
       {% if step %}
-      {{ ui.outreach_task_row(step, back='/outreach?view=active') }}
+      {{ ui.outreach_task_row(step, back='/outreach?view=active' ~ seg) }}
       {% endif %}
       {% endfor %}
     </ol>
@@ -127,7 +161,7 @@
     <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
       <p class="text-[13px] font-medium">Nobody is mid-sequence</p>
       <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Start someone from the
-        <a href="/outreach?view=new" class="text-violet2-600 hover:underline">New</a> sheet and they appear here
+        <a href="/outreach?view=new{{ seg }}" class="text-violet2-600 hover:underline">New</a> sheet and they appear here
         until every step is closed.</p>
     </div>
     {% endif %}
