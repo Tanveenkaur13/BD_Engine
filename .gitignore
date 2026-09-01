@@ -34,3 +34,6 @@ env/
 .idea/
 .vscode/
 *.swp
+
+# Personal Claude Code overrides for this checkout, not team config.
+.claude/settings.local.json
