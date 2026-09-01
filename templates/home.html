@@ -2,8 +2,58 @@
 {% import "_partials.html" as ui %}
 {% block title %}PeopleIntel — Home{% endblock %}
 
+{% block head %}
+<style>
+  /* Home's two columns, with a divider the reader can drag.
+     Written as plain CSS for the same reason .subnav is: the prebuilt Tailwind
+     sheet has no arbitrary-value grid classes beyond the ones already used, and
+     this project has no Node build to add them.
+
+     The left width lives in one custom property, --left-w. CSS owns the default
+     and the whole stacked layout below xl; the drag handler only ever writes
+     that one property, so a saved width cannot leak into the mobile layout. */
+  .home-split{display:grid;gap:1rem}
+  .home-resizer{display:none}
+
+  @media (min-width:1280px){
+    .home-split{
+      grid-template-columns:var(--left-w,380px) 11px minmax(0,1fr);
+      gap:.4rem;
+      align-items:start;
+    }
+    /* A wide grab target with a thin visible line, so the hit area is
+       comfortable without the divider looking like a scrollbar. */
+    .home-resizer{
+      display:block;
+      align-self:stretch;
+      min-height:140px;
+      padding:0;
+      border:0;
+      background:none;
+      cursor:col-resize;
+      touch-action:none;          /* or a touch drag scrolls the page instead */
+      border-radius:9px;
+    }
+    .home-resizer::before{
+      content:"";
+      display:block;
+      width:3px;
+      height:100%;
+      margin:0 auto;
+      border-radius:9px;
+      background:#E4E5EA;
+      transition:background .12s;
+    }
+    .home-resizer:hover::before,
+    .home-resizer:focus-visible::before,
+    .home-resizer[data-dragging]::before{background:#7C5CFF}
+    .home-resizer:focus-visible{outline:none}
+  }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="grid xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)] gap-4">
+<div class="home-split" id="home-split">
 
   <!-- ============================================ left column -->
   <div class="space-y-4 min-w-0">
@@ -56,6 +106,12 @@
     {% endif %}
   </div>
 
+  <!-- ======================================== the drag divider -->
+  <div id="home-resizer" class="home-resizer" role="separator"
+       aria-orientation="vertical" aria-label="Resize the left column"
+       aria-valuemin="300" tabindex="0"
+       title="Drag to resize · double-click to reset · arrow keys to nudge"></div>
+
   <!-- =========================================== right column -->
   <div class="space-y-4 min-w-0">
     {% if person %}
@@ -87,4 +143,93 @@
     {{ ui.opportunities_panel(person) }}
   </div>
 </div>
+
+{# ------------------------------------------------------------ the divider #}
+{# The only JavaScript in this app. A drag handle cannot be a form, and the
+   CSS-only alternative (resize:horizontal) needs overflow:hidden on the
+   column, which clips the card shadows and hides the grabber in a corner
+   nobody finds. It degrades cleanly: with JS off the divider is inert and the
+   layout is the 380px it has always been. #}
+<script>
+(function () {
+  var split = document.getElementById('home-split');
+  var bar = document.getElementById('home-resizer');
+  if (!split || !bar) return;
+
+  var KEY = 'peopleintel.home.left-width';
+  var MIN = 300;          // narrower than this and the people table breaks up
+  var MAX_FRACTION = 0.6; // the right column is the profile; it keeps the most
+
+  function clamp(px) {
+    var max = Math.max(MIN, Math.round(split.clientWidth * MAX_FRACTION));
+    return Math.min(Math.max(Math.round(px), MIN), max);
+  }
+
+  function current() {
+    var v = parseFloat(split.style.getPropertyValue('--left-w'));
+    return isNaN(v) ? split.firstElementChild.getBoundingClientRect().width : v;
+  }
+
+  function apply(px, remember) {
+    var w = clamp(px);
+    split.style.setProperty('--left-w', w + 'px');
+    bar.setAttribute('aria-valuenow', String(w));
+    if (remember) { try { localStorage.setItem(KEY, String(w)); } catch (e) {} }
+  }
+
+  function reset() {
+    split.style.removeProperty('--left-w');
+    bar.removeAttribute('aria-valuenow');
+    try { localStorage.removeItem(KEY); } catch (e) {}
+  }
+
+  // Restore the last width. A stored value is re-clamped rather than trusted:
+  // the window may be narrower now than it was when the value was saved.
+  try {
+    var saved = parseInt(localStorage.getItem(KEY), 10);
+    if (saved) apply(saved, false);
+  } catch (e) {}
+
+  var dragging = false;
+
+  bar.addEventListener('pointerdown', function (e) {
+    dragging = true;
+    bar.setAttribute('data-dragging', '');
+    if (bar.setPointerCapture) bar.setPointerCapture(e.pointerId);
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  bar.addEventListener('pointermove', function (e) {
+    if (dragging) apply(e.clientX - split.getBoundingClientRect().left, false);
+  });
+
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    bar.removeAttribute('data-dragging');
+    document.body.style.userSelect = '';
+    apply(current(), true);   // one write to storage per drag, not per pixel
+  }
+  bar.addEventListener('pointerup', endDrag);
+  bar.addEventListener('pointercancel', endDrag);
+
+  // Double-click restores the default, which is otherwise hard to hit by hand.
+  bar.addEventListener('dblclick', reset);
+
+  bar.addEventListener('keydown', function (e) {
+    var step = e.shiftKey ? 48 : 16;
+    if (e.key === 'ArrowLeft') { apply(current() - step, true); }
+    else if (e.key === 'ArrowRight') { apply(current() + step, true); }
+    else if (e.key === 'Home' || e.key === 'Escape') { reset(); }
+    else { return; }
+    e.preventDefault();
+  });
+
+  // A window that shrank can leave the stored width above the maximum.
+  window.addEventListener('resize', function () {
+    if (split.style.getPropertyValue('--left-w')) apply(current(), false);
+  });
+})();
+</script>
 {% endblock %}
