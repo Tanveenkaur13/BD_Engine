@@ -8,6 +8,7 @@ company research, web research, and interest detection.
     python run_pipeline.py --slug anwar-chaudhry
     python run_pipeline.py --skip-interests # research only, no LLM calls
     python run_pipeline.py --skip-linkedin  # don't look for activity links
+    python run_pipeline.py --only-linkedin  # redo just the activity search
 
 Needs FIRECRAWL_API_KEY. Interest detection additionally needs LLM_BASE_URL /
 LLM_MODEL / LLM_API_KEY (skip it with --skip-interests, or point it at a local
@@ -41,7 +42,20 @@ def main():
                     help="don't try to fill a missing email or LinkedIn URL")
     ap.add_argument("--force", action="store_true",
                     help="re-research contacts that already have findings")
+    ap.add_argument("--only-linkedin", action="store_true",
+                    help="redo only the LinkedIn activity search, for every "
+                         "contact — the cheap way to re-run it after the "
+                         "attribution rules change, without paying for company "
+                         "and web research that already succeeded")
     args = ap.parse_args()
+
+    # --only-linkedin is a mode, not a filter: everything else in the run is
+    # off, and the activity search re-runs for contacts that already have
+    # findings, which the default selection would otherwise skip.
+    if args.only_linkedin:
+        args.skip_interests = True
+        args.skip_resolve = True
+        args.skip_linkedin = False
 
     init_db()
     db = SessionLocal()
@@ -50,7 +64,7 @@ def main():
     if args.slug:
         q = q.filter(Person.slug == args.slug)
     people = q.all()
-    if not args.force and not args.slug:
+    if not args.force and not args.slug and not args.only_linkedin:
         people = [p for p in people if not p.findings]
     if args.limit:
         people = people[: args.limit]
@@ -83,7 +97,7 @@ def main():
                 print(f"  ~ identity enrichment failed for {label}: {e}")
 
         # ---- step 7: company research (once per company)
-        if p.company and not p.company.description:
+        if p.company and not p.company.description and not args.only_linkedin:
             try:
                 found = research.research_company(p.company)
                 if found:
@@ -99,26 +113,31 @@ def main():
                 print(f"  ~ company research failed for {p.company.name}: {e}")
 
         # ---- step 5: web research
-        try:
-            rows = research.research_person(p, limit=5)
-        except (research.FirecrawlNotConfigured, research.FirecrawlRejected) as e:
-            print(f"  ! {e}")
-            return 1
-        except Exception as e:
-            print(f"  x {label}: {e}")
-            # A failed search says nothing about whether we know who they
-            # are, so it no longer overwrites the enrichment answer.
-            p.recompute_status(research_failed=True, note=str(e)[:200])
-            db.commit()
-            failed += 1
-            continue
+        rows = list(p.findings) if args.only_linkedin else None
+        if rows is None:
+            try:
+                rows = research.research_person(p, limit=5)
+            except (research.FirecrawlNotConfigured, research.FirecrawlRejected) as e:
+                print(f"  ! {e}")
+                return 1
+            except Exception as e:
+                print(f"  x {label}: {e}")
+                # A failed search says nothing about whether we know who they
+                # are, so it no longer overwrites the enrichment answer.
+                p.recompute_status(research_failed=True, note=str(e)[:200])
+                db.commit()
+                failed += 1
+                continue
 
-        if args.force:
-            for old in list(p.findings):
-                db.delete(old)
-        for row in rows:
-            db.add(WebFinding(person=p, **row))
-        db.commit()
+        # In --only-linkedin mode `rows` is what is already stored, so there is
+        # nothing to write and the existing rows must not be replaced.
+        if not args.only_linkedin:
+            if args.force:
+                for old in list(p.findings):
+                    db.delete(old)
+            for row in rows:
+                db.add(WebFinding(person=p, **row))
+            db.commit()
 
         # ---- step 4: LinkedIn activity links
         # Runs before interest detection because chips are derived from the
@@ -129,7 +148,15 @@ def main():
                 pasted = [a for a in p.activities if not a.from_search]
                 room = 5 - len(pasted)
                 if room > 0:
-                    found = research.find_linkedin_activity(p, limit=room)
+                    found, observed = research.find_linkedin_activity(
+                        p, limit=room)
+                    if observed:
+                        # The profile they post from, which the file doesn't
+                        # have. Recorded beside linkedin_url, never over it.
+                        p.linkedin_observed = observed["url"]
+                        p.linkedin_observed_source = observed["evidence"][:600]
+                        p.linkedin_observed_at = observed["fetched_at"]
+                        db.commit()
                     # Never touch what a person typed in; replace only what a
                     # previous search run put there.
                     known = {(a.url or "").split("?")[0] for a in pasted}
@@ -175,7 +202,10 @@ def main():
         db.commit()
         done += 1
 
-        note = "no public footprint found" if not rows else f"{len(rows)} finding(s)"
+        if args.only_linkedin:
+            note = "LinkedIn activity only"
+        else:
+            note = "no public footprint found" if not rows else f"{len(rows)} finding(s)"
         print(f"  {done:>3}. {label}\n       {note}"
               f"{f', {n_activities} LinkedIn link(s)' if n_activities else ''}"
               f"{f', {n_interests} interest chip(s)' if n_interests else ''}"

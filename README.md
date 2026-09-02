@@ -44,6 +44,7 @@ python run_pipeline.py --limit 5           # try a few first
 python run_pipeline.py                     # everything outstanding
 python run_pipeline.py --skip-interests    # research only, no LLM calls
 python run_pipeline.py --skip-linkedin     # don't look for activity links
+python run_pipeline.py --only-linkedin     # redo just the activity search
 ```
 
 ---
@@ -146,34 +147,70 @@ page. Activities reach the panel two ways, and each row says which:
 **found by search** — `run_pipeline.py`, and the Research button, ask the same
 web search index used for everything else for public post URLs
 (`site:linkedin.com/posts "Name"`). A post URL is
-`/posts/<author-slug>_<words-from-the-post>-activity-<id>`, so the author segment
-is compared — exactly — against the profile slug in the CSV. Only the contact's
-own posts survive that. Each row keeps the query and the fetch time, the same
-provenance a web finding carries.
+`/posts/<author-slug>_<words-from-the-post>-activity-<id>`, so the author
+segment is the only thing in a search result that can prove authorship. Each
+row keeps the query and the fetch time, the same provenance a web finding
+carries.
 
-Exactly, because looser tests fail in ways that look convincing. Substring-
-matching the whole URL credited a hospital's post *about* a Professor Anwar
-Chaudhry to our Anwar Chaudhry, since his name is in the post's own slug — and
-the short slug `anwar-chaudhry` is itself a substring of
-`dr-mumtaz-anwar-chaudhry-98231b11`. Matching on name tokens credited five
-different Laura MacLeods' posts to ours.
+A row is kept only when something ties it to *this* contact. Three things can:
 
-A middle version showed name-matched rows behind an "unverified" badge so the
-panels wouldn't be empty. It was tried and reverted: of 49 rows collected across
-15 contacts, 7 were the actual contact. One panel showed four different
-Christopher Carrolls; another a recruiter called Daryl Daley, matched because
-"daryl" and "speed" appear in order in "Great insight, Daryl! speed with
-clarity". A labelled wrong row is still a wrong row on someone's profile, and it
-puts the work of re-checking every line back on the reader. Name-matched rows are
-no longer collected.
+1. **The author slug is a profile we hold for them.** Compared exactly — the
+   short slug `anwar-chaudhry` is itself a substring of
+   `dr-mumtaz-anwar-chaudhry-98231b11`, and a post's own text-slug contains the
+   names of everyone it talks about, so substring-matching the URL credited a
+   hospital's post *about* a Professor Anwar Chaudhry to ours.
+2. **The author is a different profile carrying their name, and the post names
+   their employer.** Two independent facts — the same pair `resolve.py` accepts
+   as proof that a LinkedIn URL belongs to someone.
+3. **Someone else's post that names them with their job title**, where the
+   author is the employer's own page, or where name, employer and title all
+   three appear. That is the three-fact test the web panel already uses.
 
-The cost is real and accepted: most contacts get nothing here, because most
-people's posts are not in a search index under a name a stranger can match.
-Nothing is padded to reach five. Tagged mentions are still available by hand,
-where a person has judged them.
+Name alone is never enough. Matching on name tokens credited five different
+Laura MacLeods' posts to ours; a middle version that showed name-matched rows
+behind an "unverified" badge was tried and reverted — of 49 rows across 15
+contacts, 7 were the actual contact, one panel showed four different Christopher
+Carrolls, and another a recruiter called Daryl Daley, matched because "daryl"
+and "speed" appear in order in "Great insight, Daryl! speed with clarity". A
+labelled wrong row is still a wrong row on someone's profile.
 
-No `linkedin_url` in the CSV means no slug to check against, so search returns
-nothing for that contact by design.
+**Why (2) exists.** Requiring the CSV's slug meant the panel was empty whenever
+the export's LinkedIn URL was not the profile the person posts from — and vanity
+URLs get changed, so exports go stale. Julie LeBrun posts weekly about OCA
+training from `julie-lebrun-tumbaoju` while the file records
+`julie-lebrun-45583110b`; her panel showed nothing, which read as "she doesn't
+post" rather than "our URL for her is wrong". When (2) fires, the profile it
+found is stored in `linkedin_observed` and the contact's page says the file's
+URL points elsewhere — the header link and the outreach board's "Open their
+LinkedIn" both go to the wrong profile until someone fixes it.
+
+**Ordering.** Kind first, then recency inside a kind: the contact's own
+readable posts, then anything else they wrote, then anything readable, then the
+rest — newest first throughout, decoded from each URL's activity id. Recency
+alone was right while every row was a post they wrote. Once posts that merely
+name them are admitted it is not: those arrive in volume and are mostly
+LinkedIn's attribution block with a fresh date on it, so recency alone ranked a
+content-free February mention above Gordon Hirons' own announcement of the IB
+Science Questionbanks.
+
+**Snippets that say nothing.** When a contact comments under someone else's
+post, what the index returns is often just LinkedIn's furniture — "Micaela Metz,
+graphic · Micaela Metz. Senior Learning Content Manager @ Axonify. 1y. Report
+this comment". Strip the chrome, their name, title and employer and nothing is
+left. Those rows keep their link, type and date and lose their text, because
+text is what interest chips are derived from and a chip derived from that one
+would be a chip derived from a job title.
+
+The cost is still real: a contact whose posts a search engine has never indexed
+gets nothing, and nothing is padded to reach five. Tagged mentions are also
+available by hand, where a person has judged them.
+
+No `linkedin_url` in the CSV only narrows this to (2) and (3) — a contact with
+no slug can still be confirmed by a post that names them with their employer.
+
+`python run_pipeline.py --only-linkedin` re-runs just this step for every
+contact, without paying again for company and web research that already
+succeeded.
 
 **pasted** — the form on the contact's page: pick the type, paste the link and
 the text. A hand-pasted row is never overwritten by a later search run; the

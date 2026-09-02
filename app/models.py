@@ -27,6 +27,12 @@ def _title_key(t):
     return re.sub(r"[^a-z0-9]", "", (t or "").lower())
 
 
+def _profile_key(url):
+    """Just the slug, so http/https, www/ca. and a trailing slash don't differ."""
+    u = (url or "").lower().rstrip("/")
+    return u.split("/in/")[-1].split("/")[0].split("?")[0] if "/in/" in u else u
+
+
 # ---------------------------------------------------------------- statuses
 # Two independent questions, previously answered by one field:
 #
@@ -209,6 +215,16 @@ class Person(Base):
     title_observed_source = Column(String)
     title_observed_at = Column(DateTime)
 
+    # --- the profile they actually post from, when it isn't the one the file
+    #     records. Vanity URLs get changed and exports go stale, so a post can
+    #     be proven theirs (name in the author slug, employer in the post) while
+    #     sitting under a URL the CSV has never seen. Kept beside linkedin_url
+    #     rather than replacing it, for the same reason as title_observed: the
+    #     file is the source for what it contains, and the reader decides.
+    linkedin_observed = Column(String)
+    linkedin_observed_source = Column(String)
+    linkedin_observed_at = Column(DateTime)
+
     # --- derived: the "Current Focus" sentence under the interest chips
     focus_line = Column(Text)
     focus_generated_at = Column(DateTime)
@@ -347,6 +363,18 @@ class Person(Base):
         if not (self.title and self.title_observed):
             return False
         return _title_key(self.title) != _title_key(self.title_observed)
+
+    @property
+    def linkedin_drift(self):
+        """True when they post from a different profile than the file records.
+
+        Means the URL in the header — and the "Open their LinkedIn" link on the
+        outreach board — points at a profile that is not the one publishing
+        their posts.
+        """
+        if not (self.linkedin_url and self.linkedin_observed):
+            return False
+        return _profile_key(self.linkedin_url) != _profile_key(self.linkedin_observed)
 
     def missing_critical(self):
         """The identity gaps that hold a contact at Needs Enrichment.
