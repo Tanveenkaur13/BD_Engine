@@ -206,6 +206,11 @@ class Person(Base):
     # reads it any more.
     status = Column(String, default=STATUS_NEEDS_ENRICHMENT, index=True)
     status_note = Column(String)
+    # Why the last attempt to draft a message produced nothing. Separate from
+    # status_note, which recompute_status owns: a model that timed out says
+    # nothing about whether this contact has been researched, and writing both
+    # into one field made each overwrite the other.
+    draft_note = Column(String)
     imported_at = Column(DateTime, default=utcnow)
 
     # --- designation is one of the three pillars, and the CSV's copy of it
@@ -253,6 +258,14 @@ class Person(Base):
         back_populates="person",
         cascade="all, delete-orphan",
         order_by="Interest.rank",
+    )
+    # Suggested comments and emails. Cascaded, so deleting a contact does not
+    # leave their drafts behind as orphans nothing can reach.
+    drafts = relationship(
+        "OutreachDraft",
+        back_populates="person",
+        cascade="all, delete-orphan",
+        order_by="OutreachDraft.variant",
     )
 
     # ---- outreach sequence. See app/outreach.py for the sequence itself; the
@@ -519,6 +532,16 @@ class LinkedInActivity(Base):
     corroborated = Column(Boolean, default=False)
     corroboration = Column(String)
 
+    # Comment drafts written about this post. Cascaded, because a draft is a
+    # reply to a specific post: once the post is gone — deleted by hand, or
+    # replaced when research re-runs — the draft references something we no
+    # longer hold and must not still be offered as sendable.
+    drafts = relationship(
+        "OutreachDraft",
+        back_populates="activity",
+        cascade="all, delete-orphan",
+    )
+
     @property
     def from_search(self):
         return self.added_by == "search"
@@ -644,6 +667,56 @@ class OutreachStep(Base):
         from app.outreach import blocked_reason
         return blocked_reason(self.person, self.step_key) if self.person else None
 
+    # ---- the message this step needs written
+    #
+    # Derived on read, like every other status in this app, so a draft can
+    # never be stale relative to the evidence it was written from: research
+    # that lands after a draft changes the verdict on the next render.
+
+    @property
+    def wants_draft(self):
+        """Whether this step is one a message can be drafted for.
+
+        `connect` is excluded: a connection request has no body to write. The
+        step still carries its hint, which is all it needs.
+        """
+        return self.step_key in ("comment_1", "comment_2", "email")
+
+    @property
+    def draft_kind(self):
+        return "email" if self.step_key == "email" else "comment"
+
+    @property
+    def prefer_index(self):
+        """Which post a comment step should reach for.
+
+        The second comment must not land on the post the first one did, so it
+        takes the next one down. See personalisation.comment_target.
+        """
+        return 1 if self.step_key == "comment_2" else 0
+
+    @property
+    def personalisation(self):
+        """Whether a message for this step can honestly be personalised.
+
+        Costs nothing — no model call, no network. That is the point: the panel
+        can say a contact is too thin to write to before anyone spends a
+        request finding out.
+        """
+        from app.personalisation import assess
+        if not (self.person and self.wants_draft):
+            return None
+        return assess(self.person, self.draft_kind,
+                      prefer_index=self.prefer_index)
+
+    @property
+    def draft_options(self):
+        """Stored options for this step's kind of message."""
+        from app.messages import options_for
+        if not (self.person and self.wants_draft):
+            return []
+        return options_for(self.person, self.step_key)
+
     @property
     def state(self):
         if self.done_at:
@@ -655,6 +728,80 @@ class OutreachStep(Base):
         if self.is_due:
             return "due"
         return "waiting"
+
+
+class OutreachDraft(Base):
+    """One suggested option for one outreach step: a comment, or an email.
+
+    Several rows per (person, kind) by design — the point is a choice. A person
+    picks the angle that fits what they actually know, which is a judgement the
+    model should not be making alone, and having three on screen makes the
+    weakest one visibly weak.
+
+    Provenance is mandatory here for the same reason it is on a web finding:
+    `basis` names the signals the draft was written from, so a reader can tell
+    a message grounded in the contact's own post from one leaning on their
+    employer's marketing copy. A draft with an empty basis is not stored — see
+    messages._keep.
+
+    Regenerating replaces every row for that (person, kind): the options are a
+    set, and mixing a warm variant from an hour ago with two formal ones now
+    would make `tone` a lie about what is on screen.
+    """
+    __tablename__ = "outreach_drafts"
+
+    id = Column(Integer, primary_key=True)
+    person_id = Column(Integer, ForeignKey("people.id"), index=True)
+    person = relationship("Person", back_populates="drafts")
+
+    kind = Column(String, index=True)       # "comment" | "email"
+    step_key = Column(String)               # the step it was drafted for
+    variant = Column(Integer, default=1)    # 1..n, the order shown
+
+    # A short name for what this option leads with, so the three are
+    # distinguishable at a glance rather than three grey boxes.
+    angle = Column(String)
+
+    subject = Column(String)                # email only
+    body = Column(Text)
+
+    # The knobs the reader turned. Stored so the panel can show what produced
+    # what is on screen, and so a regenerate can default to the last choice.
+    tone = Column(String)                   # email only
+    length = Column(String)
+
+    # Which signals this was written from, and the post it replies to.
+    basis = Column(Text)
+    activity_id = Column(Integer, ForeignKey("linkedin_activities.id"))
+    activity = relationship("LinkedInActivity", back_populates="drafts")
+
+    model = Column(String)
+    generated_at = Column(DateTime, default=utcnow)
+
+    @property
+    def char_count(self):
+        return len(self.body or "")
+
+    @property
+    def word_count(self):
+        return len((self.body or "").split())
+
+    @property
+    def over_linkedin_limit(self):
+        """Whether this would be refused by LinkedIn's comment box.
+
+        Enforced before storing too (messages.reject_reason), so this should
+        never be True. It is here so a row written by an older version, or one
+        edited by hand in the DB, still shows the problem rather than failing
+        silently in the paste.
+        """
+        from app.messages import LINKEDIN_COMMENT_MAX_CHARS
+        return self.kind == "comment" and self.char_count > LINKEDIN_COMMENT_MAX_CHARS
+
+    @property
+    def basis_lines(self):
+        """`basis` as a list, for rendering one signal per line."""
+        return [b.strip() for b in (self.basis or "").split(";") if b.strip()]
 
 
 class Interest(Base):

@@ -47,6 +47,16 @@ python run_pipeline.py --skip-linkedin     # don't look for activity links
 python run_pipeline.py --only-linkedin     # redo just the activity search
 ```
 
+### Who the drafts are signed by
+
+Optional — these are the defaults, so suggested emails work unset:
+
+```bash
+export OUTREACH_SENDER_NAME="Rahul Goenka"
+export OUTREACH_SENDER_ROLE="Head of Marketing"
+export OUTREACH_SENDER_COMPANY="Screwdriver"
+```
+
 ---
 
 ## The 9 steps
@@ -62,6 +72,10 @@ python run_pipeline.py --only-linkedin     # redo just the activity search
 | 7 | Company Research | `app/research.py` — company's own site preferred |
 | 8 | Dashboard | FastAPI + Jinja2 templates |
 | 9 | Reports & Export | `/reports` — breakdowns and the stale-designation list |
+
+Segmenting and the outreach sequence sit outside this list: the nine steps
+answer "who is this person", and the sequence answers "have we spoken to them
+yet". Both have their own sections below.
 
 ---
 
@@ -294,6 +308,215 @@ trust it.
 
 ---
 
+## Segmenting the list
+
+Two independent filters on the People list and the Outreach board, in
+`app/segments.py`. Either narrows on its own; together they intersect —
+"Education in Canada". Neither is stored on the record. Both are derived on
+read, so a re-upload or an enrichment run can never leave a stale segment
+behind.
+
+**Country.** An Apollo export carries two, and they are not the same fact:
+where the person is, and where their employer is. On the sample list the
+person's country is Canada for 25 of 27 rows while the employer's spans seven
+countries, so filtering on the person alone produces one useless bucket. A
+contact therefore matches a country when *either* field does, and both are
+shown on the row so a match is never mysterious.
+
+**Category.** Nothing in the file says "education" or "medical" — the nearest
+thing is the employer's industry, which arrives as free text ("e-learning",
+"higher education", "electrical/electronic manufacturing"). Those are keyed
+into seven broad buckets by keyword. First match wins, so the order of
+`CATEGORIES` is precedence: "professional training & coaching" has to reach
+Education before anything else claims it. Where the industry is blank the
+company's keywords and then the person's own title are tried, because a row
+with no industry often still says what it does — a title of "Filmmaker.
+Creative Director. Founder" is clearly Media.
+
+A row matching nothing lands in **Other** rather than being hidden. An
+unmatched contact is still a contact, and silently dropping it from every
+category view would quietly shrink the list.
+
+---
+
+## The outreach sequence
+
+Steps 1–9 answer "who is this person". The sequence answers "have we spoken to
+them yet", which is independent of it — a fully researched contact nobody has
+approached and a thin contact mid-sequence are both real states.
+
+Four steps, in `app/outreach.py`:
+
+| Step | Waits | Why |
+|---|---|---|
+| Comment on their post | 0 | as soon as they enter the sequence |
+| Comment again | 2 days | the gap, so the second isn't same-day |
+| Send follow / connection request | 0 | while the name is fresh from the comment thread |
+| Send email | 2 days | reference the posts rather than opening cold |
+
+**Every step is done by hand.** Nothing here posts a comment, sends a
+connection request or sends an email. The app tracks where each contact is and
+what is due; a person does the work. That is deliberate twice over: automated
+LinkedIn engagement gets accounts restricted, and an automated first touch is
+exactly the thing this sequence is designed not to look like.
+
+**Steps are not pre-created.** Only one is ever open per contact, and the next
+one is created when the current one is completed, with its due date measured
+from the day that actually happened. A manual sequence cannot schedule step
+three in advance, because its due date depends on the day step two happened
+rather than the day it was meant to — so a step done three days late pushes the
+rest back three days, which is what someone running this by hand expects.
+Marking a step done is therefore also what schedules the next one.
+
+The waits are defaults, not rules — they are the `wait_days` key on each
+entry of `SEQUENCE`. A due date can be moved, and a step can be
+**skipped with a reason** when there is nothing to comment on — which is
+necessary, because the sequence assumes things that aren't always true. A
+skipped step is closed and recorded as considered, which is different from
+still being open.
+
+A step whose prerequisite is missing says so instead of presenting a task
+nobody can action: "No email address on file — run enrichment, or skip this
+step." See `outreach.blocked_reason`.
+
+**The board.** `/outreach` splits into four sheets — Due today, New, In
+progress, Complete — rather than one long page, because the New column alone
+filled a screen and pushed the in-progress list below the fold. Overdue steps
+are counted in Due today rather than listed separately: a task that slipped is
+still today's task, and the row shows how late it is. The header bell shows the
+same count on every page, resolved once in `main.ctx()`.
+
+---
+
+## Suggested messages
+
+Three of the four steps ask for something a person then has to write. A task that
+says only "comment on their post" leaves the actual work undone, so both the
+comment steps and the email step draft it — as **three options**, for a person
+to pick from, edit and send.
+
+Nothing is sent automatically. There is no send button anywhere in this app.
+
+### It refuses to write a message it cannot ground
+
+`app/personalisation.py` counts the evidence before anything is generated, and
+the check costs nothing — no model call, no network — so the panel can say a
+contact is too thin to write to *before* anyone spends a request finding out.
+
+Signals are tiered by whose fact they are, the same distinction
+`opportunities.py` draws:
+
+| Tier | Source |
+|---|---|
+| `said` | their posts (trusted rows only), interest chips, focus line |
+| `company` | the researched company description, industry, keywords |
+| `web` | corroborated findings only |
+| `role` | title, seniority, department |
+
+**`role` alone is never enough.** Everyone on the list has a designation, so a
+draft grounded in nothing else would be available for all of them and personal
+to none — confidently impersonal, and going out under the user's own name. An
+email needs two signals from outside `role`; a comment needs the post it
+replies to, because without the post's text there is nothing to reply to.
+
+A contact who fails the check gets no draft button, because there is nothing a
+button could do except produce a template. What it shows instead:
+
+> **Not personalised for Sam Quinn**
+> We hold 0 of the 2 things an email needs to sound like it knows them
+> (nothing). Everything else on this record is their job title, which every
+> contact on the list has — an email written from it would read as a template.
+>
+> **Not on file:** anything in their own words · a description of Hibernia
+> College · any corroborated web finding
+> *Run research on them → · Paste one of their posts by hand →*
+
+It also lists what *is* on file, so "not enough" is checkable rather than
+asserted.
+
+### Ready to paste, not ready to edit
+
+The drafts are written as a marketing lead would write them: a peer who read
+the post properly and has a view on it, not a fan and not a commenter-for-
+reach. For the email, the brief is genuine curiosity about the company — show
+you looked at their specific work, say something about it worth reading, and
+ask one real question about how their company does it.
+
+Three failures make a draft unsendable, and all three are checked in code
+rather than merely asked for in the prompt — the same enforcement
+`interests.py` applies to a chip that arrives with no evidence:
+
+- **Claimed common ground.** "We both know how hard content is" is not warmth,
+  it is a guess about the sender dressed as rapport: nothing on the record says
+  anything about the sender's own work. `BANNED_COMMONALITY` catches "we both",
+  "as fellow marketers", "like you, I", "resonates", "hits home". Matched as
+  stems, because "this resonates" does not catch "this *really* resonates" — an
+  adverb dropped between two words defeats any bigram.
+- **Marketing filler.** `GENERIC_FILLER` catches "in today's landscape", "move
+  the needle", "leverage", "unlock", "seamless", "best-in-class", "thought
+  leadership", "deep dive", "synergies", "I hope this finds you well". The test
+  the prompt sets: a sentence that would survive being pasted under a different
+  post is not a sentence, it is filler.
+- **Anything left to fill in.** Placeholders, square brackets, alternatives
+  separated by a slash. An email is also rejected if it asks no question — a
+  first email with nothing in it for them is a pitch — and if it arrives
+  unsigned, because copy-and-paste ready means signed rather than "copy, paste,
+  then remember to sign it".
+
+Every option must also share distinctive words with the evidence it claims to
+be written from. A draft can pass every style rule and still be about nothing
+in particular; the overlap check is blunt, but it catches the plausible generic
+paragraph that names no fact from the record.
+
+When every option fails, the panel says which check killed which draft rather
+than showing a blank. Nothing is stored.
+
+### The knobs
+
+**Comment length** — Brief (15–30 words) or Standard (30–55).
+**Email tone** — Warm, Direct or Formal. **Email length** — Short (60–90
+words), Medium (100–140), Long (150–200).
+
+Both selects default to whatever produced the options on screen, and
+regenerating **replaces** the set. Options are a set: mixing a warm variant
+from an hour ago with two formal ones now would make the tone label a lie about
+what is on the page.
+
+`LINKEDIN_COMMENT_MAX_CHARS` is 1250 — LinkedIn refuses a longer comment, so a
+draft over it is not a stylistic problem but an unpasteable one, and it is
+rejected before storage. Comments are also collapsed behind "…see more" after
+roughly 250 characters, which is why the length bands sit far under the hard
+limit rather than near it. Each option reports its real count and which side of
+those lines it falls on.
+
+**Cost.** One model call per press, whichever kind and however many options —
+three separate calls would cost three times as much and give the model no way
+to make the options differ from each other. Regenerating spends another.
+
+**Provenance, as everywhere else.** Each option carries the signals it was
+written from, so a reader can tell a message grounded in the contact's own post
+from one leaning on their employer's marketing copy. An option whose grounding
+is empty is discarded rather than shown.
+
+The panel is one macro, rendered identically on the Outreach board and on a
+contact's own page, so the two cannot drift on what a step offers.
+
+### Who it is signed by
+
+The signature is part of what gets drafted. It comes from the environment,
+because auth is not implemented and the header shows a fixed user:
+
+```bash
+export OUTREACH_SENDER_NAME="Rahul Goenka"
+export OUTREACH_SENDER_ROLE="Head of Marketing"
+export OUTREACH_SENDER_COMPANY="Screwdriver"
+```
+
+Those are the defaults, so it works unset. When real accounts exist this reads
+the session instead and nothing else changes.
+
+---
+
 ## Provenance
 
 Every fact the app fetched itself carries a clickable source and a fetch date:
@@ -316,7 +539,7 @@ source.
 | Web framework | FastAPI |
 | Templates | Jinja2, server-rendered |
 | Styling | Tailwind, prebuilt to `static/app.css` |
-| Interactivity | plain forms |
+| Interactivity | plain forms, and two small scripts (see below) |
 | Database | SQLite via SQLAlchemy |
 | Web research | Firecrawl API (HTTP) |
 | Language model | any OpenAI-compatible endpoint |
@@ -330,6 +553,12 @@ else changes.
 **Model.** Groq and Ollama both speak the OpenAI chat-completions format, so
 moving from hosted to self-hosted is a change to `LLM_BASE_URL` and nothing else.
 
+**JavaScript.** There is some, in two places, and both are things a form cannot
+do: the draggable divider between the columns on Home, and the copy buttons on
+the suggested messages. Both degrade to nothing — with scripts off the divider
+is inert at its default width and the drafts are still selectable text. No
+framework, no bundler, no CDN.
+
 **CSS.** `static/app.css` is committed, so running the app needs no build step
 and no Node. To change styles, edit `input.css` / `tailwind.config.js` and
 rebuild — Tailwind ships a standalone binary that needs no Node either:
@@ -342,7 +571,10 @@ tailwindcss -i input.css -o static/app.css --minify
 
 ## Not built
 
-- **Email generation.** Deliberately out of scope. The schema has room for it.
+- **Sending anything.** Drafting is built (see Suggested messages); sending is
+  not, and is not planned. No mailbox is connected, nothing posts to LinkedIn,
+  and there is no send button anywhere in the app. Every step of the sequence
+  is completed by a person who copied the text and sent it themselves.
 - **Direct phone numbers.** The Apollo export has none for any of the 25
   contacts — only company switchboards. Direct lines need a paid waterfall
   enrichment, so the field is shown as an optional gap and doesn't hold a

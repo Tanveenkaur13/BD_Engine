@@ -47,6 +47,7 @@ ADDED_COLUMNS = {
         ("linkedin_source", "VARCHAR"),
         ("linkedin_found_at", "DATETIME"),
         ("identity_note", "VARCHAR"),
+        ("draft_note", "VARCHAR"),
         ("linkedin_observed", "VARCHAR"),
         ("linkedin_observed_source", "VARCHAR"),
         ("linkedin_observed_at", "DATETIME"),
