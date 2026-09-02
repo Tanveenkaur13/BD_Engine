@@ -20,6 +20,7 @@ from .env import status as env_status
 from . import pipeline
 from . import outreach
 from . import messages
+from . import personalisation
 from . import segments
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -83,6 +84,28 @@ templates.env.filters["relative_time"] = relative_time
 templates.env.filters["domain"] = domain_of
 templates.env.filters["short_date"] = short_date
 templates.env.filters["money"] = money
+
+
+# ------------------------------------------------------- template globals
+# The choices the outreach draft panel offers, and the limits it reports
+# against. Registered as globals because that panel is a macro in
+# _partials.html: a macro cannot see a route's context, and threading these
+# through would put five more arguments on every use of outreach_task_row.
+# One definition, so the select the reader sees and the validator that checks
+# the result can never disagree about what a length or a tone is.
+templates.env.globals.update(
+    COMMENT_LENGTHS=messages.COMMENT_LENGTHS,
+    EMAIL_TONES=messages.EMAIL_TONES,
+    EMAIL_LENGTHS=messages.EMAIL_LENGTHS,
+    DEFAULT_COMMENT_LENGTH=messages.DEFAULT_COMMENT_LENGTH,
+    DEFAULT_EMAIL_TONE=messages.DEFAULT_EMAIL_TONE,
+    DEFAULT_EMAIL_LENGTH=messages.DEFAULT_EMAIL_LENGTH,
+    LINKEDIN_COMMENT_MAX_CHARS=messages.LINKEDIN_COMMENT_MAX_CHARS,
+    LINKEDIN_COMMENT_VISIBLE_CHARS=messages.LINKEDIN_COMMENT_VISIBLE_CHARS,
+    OPTION_COUNT=messages.OPTION_COUNT,
+    FIX_LABELS=personalisation.FIX_LABELS,
+    TIER_LABELS=personalisation.TIER_LABELS,
+)
 
 
 # --------------------------------------------------------------- helpers
@@ -474,6 +497,72 @@ def outreach_reschedule(step_id: int, due: str = Form(""), back: str = Form(""),
         parsed = None
     if parsed:
         outreach.reschedule(db, step, parsed)
+    return RedirectResponse(_safe_back(back, f"/person/{slug}#outreach"),
+                            status_code=303)
+
+
+@app.post("/outreach/{step_id}/suggest")
+def outreach_suggest(step_id: int, tone: str = Form(""), length: str = Form(""),
+                     back: str = Form(""), db: Session = Depends(get_session)):
+    """Draft the options for one outreach step, at the chosen tone and length.
+
+    Inline rather than in a thread, for the reason /suggest-comments is: this
+    is one model call and it answers in a couple of seconds, where a research
+    run is tens of seconds and several APIs. Threading it would buy nothing and
+    cost the reader the result on the page they are looking at.
+
+    An unpersonalisable contact never reaches the model. personalisation.assess
+    is free, so the check runs first and the reason is shown instead — which is
+    also why the panel can say so before anybody presses the button.
+    """
+    step = db.query(OutreachStep).filter(OutreachStep.id == step_id).first()
+    if not step:
+        return RedirectResponse("/outreach", status_code=303)
+    slug = step.person.slug
+    fallback = f"/person/{slug}#outreach"
+    if not step.wants_draft:
+        return RedirectResponse(_safe_back(back, fallback), status_code=303)
+
+    try:
+        result = messages.suggest_for_step(
+            db, step.person, step,
+            tone=tone or None, length=length or None,
+        )
+    except messages.LLMNotConfigured:
+        return RedirectResponse(_safe_back(back, fallback) + "?err=nollm",
+                                status_code=303)
+    except Exception as exc:
+        # A model that times out or answers with a 500 is not the reader's
+        # fault and not a reason to lose the page. The note rides back on the
+        # step so the panel can say what happened.
+        step.person.draft_note = f"Drafting failed: {exc}"[:300]
+        db.commit()
+        return RedirectResponse(_safe_back(back, fallback) + "?err=draft",
+                                status_code=303)
+
+    if not result["stored"] and result.get("reason"):
+        messages.clear_options(db, step.person, step.step_key)
+        step.person.draft_note = result["reason"][:300]
+        db.commit()
+    return RedirectResponse(_safe_back(back, fallback), status_code=303)
+
+
+@app.post("/outreach/{step_id}/drafts/clear")
+def outreach_drafts_clear(step_id: int, back: str = Form(""),
+                          db: Session = Depends(get_session)):
+    """Throw the options away.
+
+    Worth its own endpoint because the alternative is that a set of drafts
+    written for a tone the reader has changed their mind about sits on the page
+    looking current.
+    """
+    step = db.query(OutreachStep).filter(OutreachStep.id == step_id).first()
+    if not step:
+        return RedirectResponse("/outreach", status_code=303)
+    slug = step.person.slug
+    messages.clear_options(db, step.person, step.step_key)
+    step.person.draft_note = None
+    db.commit()
     return RedirectResponse(_safe_back(back, f"/person/{slug}#outreach"),
                             status_code=303)
 
