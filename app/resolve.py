@@ -29,8 +29,8 @@ import re
 from datetime import datetime, timezone
 
 from .research import (
-    FirecrawlNotConfigured, FirecrawlRejected, _host, _in_order, _norm_text,
-    _profile_slug, _search,
+    FirecrawlNotConfigured, FirecrawlRejected, _domain_brand, _host, _in_order,
+    _norm_text, _profile_slug, _search,
 )
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -99,7 +99,7 @@ def company_terms(person, discovered=None):
     elif discovered and discovered.get("domain"):
         domain = discovered["domain"].lower()
     if domain and domain not in CONSUMER_DOMAINS:
-        brand = _norm_text(domain.rsplit(".", 2)[0].split(".")[-1])
+        brand = _domain_brand(domain)
         if brand:
             terms.append(brand)
     return [t for t in terms if t], domain

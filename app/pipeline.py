@@ -105,7 +105,15 @@ def research_contact(db, person, skip_interests=False, skip_linkedin=False,
             pasted = [a for a in person.activities if not a.from_search]
             room = MAX_ACTIVITIES - len(pasted)
             if room > 0:
-                found = research.find_linkedin_activity(person, limit=room)
+                found, observed = research.find_linkedin_activity(person,
+                                                                  limit=room)
+                if observed:
+                    # The profile they post from, which the file doesn't have.
+                    # Recorded beside linkedin_url, never over it.
+                    person.linkedin_observed = observed["url"]
+                    person.linkedin_observed_source = observed["evidence"][:600]
+                    person.linkedin_observed_at = observed["fetched_at"]
+                    db.commit()
                 # Never touch what a person typed in; replace only what a
                 # previous search run put there.
                 known = {research.clean_activity_url(a.url) for a in pasted}

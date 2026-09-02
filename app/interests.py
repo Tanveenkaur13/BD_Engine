@@ -60,7 +60,14 @@ def _build_evidence(person):
         if not a.trusted:
             continue
         when = a.activity_date.isoformat() if a.activity_date else "date unknown"
-        lines.append(f"[LinkedIn {a.type_label}, {when}] {a.text}")
+        # Rule 3 tells the model to prefer the person's own words, so whose
+        # words these are has to be on the line. A Repost or a Tagged row is
+        # someone else writing about them — usable as evidence of what they
+        # are involved in, not of how they talk about it.
+        whose = ("someone else's words about them"
+                 if a.activity_type in ("repost", "tagged")
+                 else "their own words")
+        lines.append(f"[LinkedIn {a.type_label}, {when}, {whose}] {a.text}")
     for f in person.findings:
         # Unconfirmed findings are excluded, not merely ranked lower. A search
         # for a common name returns strangers, and a chip derived from one is

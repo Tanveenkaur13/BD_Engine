@@ -225,6 +225,28 @@
         </div>
         {% endif %}
 
+        {# The file's LinkedIn URL is not the profile their posts come from.
+           Worth saying loudly: the header link and the "Open their LinkedIn"
+           button on the outreach board both go to the wrong person, and the
+           activity panel below is attributed to the profile named here. #}
+        {% if person.linkedin_drift %}
+        <div class="mt-2.5 flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+          <svg class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          <div class="text-[12.5px] leading-relaxed min-w-0">
+            <b class="text-amber-800">They post from a different profile.</b>
+            The file records
+            <i class="break-all">{{ person.linkedin_url.split('/in/')[-1].rstrip('/') }}</i>,
+            but their posts come from
+            <a href="{{ person.linkedin_observed }}" target="_blank" rel="noopener" class="text-[#0A66C2] hover:underline break-all">{{ person.linkedin_observed.split('/in/')[-1].rstrip('/') }}</a>.
+            {% if person.linkedin_observed_source %}
+            <span class="block text-[11.5px] text-ink-faint mt-1">
+              {{ person.linkedin_observed_source }}{% if person.linkedin_observed_at %} · established {{ person.linkedin_observed_at|short_date }}{% endif %}
+            </span>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
         <div class="mt-3 space-y-1.5 text-[13px]">
           {% if person.email %}
           <div class="flex items-center gap-2.5">
