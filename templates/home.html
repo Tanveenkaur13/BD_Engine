@@ -101,9 +101,6 @@
       {{ ui.people_table(people, selected_slug=person.slug if person else None) }}
     </section>
 
-    {% if person and person.company %}
-      {{ ui.company_card(person.company) }}
-    {% endif %}
   </div>
 
   <!-- ======================================== the drag divider -->
@@ -138,6 +135,20 @@
         <p class="text-[14px] font-medium">No contacts yet</p>
         <p class="text-[13px] text-ink-faint mt-1">Upload a CSV to get started.</p>
       </div>
+    {% endif %}
+
+    {# Who they work for, directly above what we can sell them — the
+       opportunities panel argues from this company's own record, so the two
+       read as one thought.
+
+       It sits here rather than in the left column because company_card's
+       responsive classes are Tailwind's viewport breakpoints, not container
+       queries: in a 380px rail `sm:flex-row` and `lg:grid-cols-2` still fire
+       at a desktop window size, putting the logo beside the prose and the
+       facts into two columns that a 380px rail cannot hold — which rendered
+       the website value one character per line. #}
+    {% if person and person.company %}
+      {{ ui.company_card(person.company) }}
     {% endif %}
 
     {{ ui.opportunities_panel(person) }}
