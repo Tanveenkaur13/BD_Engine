@@ -47,6 +47,13 @@ def _is_linkedin(url):
 LOW_VALUE = {"rocketreach.co", "zoominfo.com", "signalhire.com", "lusha.com",
              "apollo.io", "datanyze.com", "leadiq.com", "contactout.com"}
 
+# Firecrawl's date-range filter, restricting a search to the last year.
+# Unfiltered search ranks by engagement, not date, so "what's recent" needs
+# asking for explicitly. Shared by the LinkedIn activity search and the
+# company-news backfill in research_person, both of which care about lately
+# over merely relevant.
+RECENT_WINDOW = "qdr:y"
+
 
 class FirecrawlNotConfigured(RuntimeError):
     pass
@@ -183,19 +190,32 @@ def research_person(person, limit=5):
     """
     Returns up to `limit` findings as plain dicts, ranked.
 
-    Two queries, because one angle misses things: the person with their company,
-    and the person with their role. Results are deduped by URL, data-broker
-    pages are pushed to the back, and nothing is padded to reach `limit` — an
-    empty list is a real answer.
+    Two queries, both anchored on the company rather than just the person: the
+    person with their company, and the person with their role at that company.
+    The second used to drop the company entirely (name + title alone), which
+    surfaced whoever else on the web shares a title, not this contact at this
+    employer. Results are deduped by URL, and data-broker pages are pushed to
+    the back.
 
     linkedin.com is excluded outright: this panel answers "what does the rest of
     the web say", and LinkedIn has its own panel that attributes posts properly.
     See _is_linkedin.
+
+    When that leaves fewer than `limit` rows — a real, common outcome for a
+    mid-level contact with no web footprint of their own — the remaining slots
+    are filled with general company news (a launch, an expansion, a
+    partnership) rather than left empty. This is exactly the kind of thing
+    Screwdriver's pitch draws on, so a contact with nothing personal findable
+    still leaves the panel useful instead of blank. Those rows are marked
+    `about_company` and never `corroborated`: interests.py and employer.py
+    already skip anything uncorroborated, so company filler can never be
+    mistaken for evidence about the person or leak into their interest chips.
     """
     company = person.company.name if person.company else ""
+    domain = (person.company.domain or "") if person.company else ""
     queries = [q for q in (
         f'"{person.full_name}" {company}'.strip(),
-        f'"{person.full_name}" {person.title or ""}'.strip(),
+        f'"{person.full_name}" {person.title or ""} {company}'.strip(),
     ) if q.strip('" ')]
 
     seen, rows = set(), []
@@ -229,14 +249,44 @@ def research_person(person, limit=5):
                 "kind": classify(url, h.get("title")),
                 "source_query": q,
                 "fetched_at": datetime.now(timezone.utc),
-                "corroborated": why is not None,
+                "corroborated": True,
                 "corroboration": why,
+                "about_company": False,
                 "_low": host in LOW_VALUE,
             })
 
-    # Everything here is tied to the contact, so only the data-broker demotion
-    # is left to do.
-    rows.sort(key=lambda r: r["_low"])
+    # Backfill with company news — one extra search, fired only when the
+    # person-specific queries above didn't already fill the panel.
+    if company and len(rows) < limit:
+        q = f'"{company}" {domain} announces OR launches OR unveils OR expands OR partners'.strip()
+        try:
+            hits = _search(q, limit=8, tbs=RECENT_WINDOW)
+        except (FirecrawlNotConfigured, FirecrawlRejected):
+            raise
+        except Exception:
+            hits = []
+        for h in hits:
+            url = h.get("url")
+            if not url or url in seen or _is_linkedin(url):
+                continue
+            seen.add(url)
+            host = _host(url)
+            rows.append({
+                "title": h.get("title") or url,
+                "url": url,
+                "snippet": (h.get("description") or "")[:600] or None,
+                "kind": classify(url, h.get("title")),
+                "source_query": q,
+                "fetched_at": datetime.now(timezone.utc),
+                "corroborated": False,
+                "corroboration": None,
+                "about_company": True,
+                "_low": host in LOW_VALUE,
+            })
+
+    # Evidence about the person always outranks company filler; within each
+    # tier, data-broker pages are pushed to the back.
+    rows.sort(key=lambda r: (r["about_company"], r["_low"]))
     for i, r in enumerate(rows[:limit], start=1):
         r["rank"] = i
         r.pop("_low", None)
@@ -246,11 +296,9 @@ def research_person(person, limit=5):
 # /posts/ carries its author in the URL, which is the only thing in a search
 # result that can prove authorship directly. /pulse/ and /feed/update/ don't, so
 # those depend on the post's own text naming the contact with their employer.
-# Re-ask the primary query restricted to the last year. The unfiltered passes
-# return whatever the index ranks highest, which tracks engagement rather than
-# date, so a contact who posted last week can sit behind a 2023 post that
-# happens to rank well. Costs one extra search per contact.
-RECENT_WINDOW = "qdr:y"
+# The fourth query below re-asks the primary one restricted to RECENT_WINDOW,
+# since a contact who posted last week can otherwise sit behind a 2023 post
+# that ranks better. Costs one extra search per contact.
 
 POSTS_MARKER = "/posts/"
 ACTIVITY_PATHS = ("/posts/", "/pulse/", "/feed/update/")

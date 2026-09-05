@@ -16,14 +16,14 @@
   {{ ui.summary_panel(person) }}
   {{ ui.interests_panel(person) }}
 
+  {% if person.company %}
+    {{ ui.company_card(person.company) }}
+  {% endif %}
+
   <div class="grid lg:grid-cols-2 gap-4 items-start">
     {{ ui.linkedin_panel(person, allow_add=True, error=activity_error) }}
     {{ ui.web_panel(person) }}
   </div>
-
-  {% if person.company %}
-    {{ ui.company_card(person.company) }}
-  {% endif %}
 
   {# ------------------------------------------------- data completeness #}
   <section class="card shadow-card p-5">

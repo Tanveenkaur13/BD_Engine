@@ -51,10 +51,14 @@ ADDED_COLUMNS = {
         ("linkedin_observed", "VARCHAR"),
         ("linkedin_observed_source", "VARCHAR"),
         ("linkedin_observed_at", "DATETIME"),
+        ("linkedin_refreshing", "BOOLEAN DEFAULT 0"),
+        ("linkedin_refreshed_at", "DATETIME"),
+        ("linkedin_refresh_error", "VARCHAR"),
     ],
     "web_findings": [
         ("corroborated", "BOOLEAN DEFAULT 0"),
         ("corroboration", "VARCHAR"),
+        ("about_company", "BOOLEAN DEFAULT 0"),
     ],
 }
 
