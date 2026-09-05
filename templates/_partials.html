@@ -818,6 +818,272 @@
 {% endmacro %}
 
 
+{# ---------------------------------------------------------------------------
+   Copy to clipboard.
+
+   `type="button"` matters: these sit a few nodes away from the draft forms, and
+   a bare <button> inside one would submit it. Text-only, no icon, because the
+   handler swaps the label to confirm and would wipe an icon out of the button
+   doing it.
+
+   Pairs with copy_script(), which has to be on the page once for these to do
+   anything. A page that forgets it gets an inert button rather than an error,
+   which is why the script is a named macro and not a comment telling you to
+   remember.
+--------------------------------------------------------------------------- #}
+{% macro copy_button(target, label='Copy') %}
+<button type="button" data-copy="{{ target }}"
+        class="h-6 px-2 shrink-0 rounded-md border border-violet2-100 bg-white text-[10px] font-medium text-violet2-700 hover:bg-violet2-50 hover:border-violet2-200">{{ label }}</button>
+{% endmacro %}
+
+
+{# One delegated listener for every copy button on the page, however many
+   drafts are rendered. Bound to the document rather than to each button, so
+   options that arrive on the next render are handled without rebinding. #}
+{% macro copy_script() %}
+<script>
+(function () {
+  var RESET_MS = 1400;
+
+  function flash(button, message) {
+    if (button.dataset.busy) return;              // ignore a second click mid-flash
+    button.dataset.label = button.dataset.label || button.textContent;
+    button.dataset.busy = '1';
+    button.textContent = message;
+    setTimeout(function () {
+      button.textContent = button.dataset.label;
+      delete button.dataset.busy;
+    }, RESET_MS);
+  }
+
+  function legacyCopy(field) {
+    // navigator.clipboard is undefined outside a secure context, which this app
+    // is on 127.0.0.1 but is not once it is served over plain http from a LAN
+    // address or a host without TLS. Selecting the field and asking the
+    // document to copy still works there. The selection is restored on success
+    // and deliberately left in place on failure, so Ctrl+C is one keystroke
+    // away when even this is refused.
+    var start = field.selectionStart;
+    var end = field.selectionEnd;
+    var copied = false;
+    field.focus();
+    field.select();
+    try {
+      copied = document.execCommand('copy');
+    } catch (e) {
+      copied = false;
+    }
+    if (copied && field.setSelectionRange) {
+      field.setSelectionRange(start, end);
+    }
+    return copied;
+  }
+
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest && event.target.closest('[data-copy]');
+    if (!button) return;
+    event.preventDefault();
+
+    var field = document.getElementById(button.getAttribute('data-copy'));
+    if (!field) return;                            // a draft removed mid-page
+
+    var text = field.value;
+    if (!text || !text.trim()) {
+      flash(button, 'Empty');
+      return;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { flash(button, 'Copied'); },
+        // Permission refused, or the tab is not focused. Fall through rather
+        // than reporting a failure the fallback can still fix.
+        function () { flash(button, legacyCopy(field) ? 'Copied' : 'Press Ctrl+C'); }
+      );
+    } else {
+      flash(button, legacyCopy(field) ? 'Copied' : 'Press Ctrl+C');
+    }
+  });
+})();
+</script>
+{% endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   The message a step needs written, as several options.
+
+   Three states, and the panel must render all three honestly:
+
+     not personalisable  We do not hold enough about this contact to write
+                         something that sounds like it knows them. Says so,
+                         names what is missing, and offers no draft button —
+                         because there is nothing a button could do except
+                         produce a template. See app/personalisation.py.
+     nothing drafted yet The controls, and what they will produce.
+     options on file     The options, each with its own grounding, plus the
+                         controls to regenerate at a different tone or length.
+
+   Both comment steps and the email step come through here, so the two can
+   never drift apart on what an option looks like or what it costs.
+--------------------------------------------------------------------------- #}
+{% macro outreach_draft_block(step, back) %}
+{% if step.wants_draft %}
+{% set v = step.personalisation %}
+{% set options = step.draft_options %}
+{% set kind = step.draft_kind %}
+{% set is_email = kind == 'email' %}
+{% set last = options[0] if options else None %}
+
+<div class="mt-2.5 rounded-xl border {% if not v.ok %}border-amber-100 bg-amber-50/40{% else %}border-violet2-100 bg-violet2-50/40{% endif %} p-3">
+
+  <div class="flex items-center gap-2 flex-wrap mb-2">
+    <span class="text-[10px] font-semibold uppercase tracking-wide {% if not v.ok %}text-amber-700{% else %}text-violet2-600{% endif %}">
+      {% if is_email %}Suggested email{% else %}Suggested comment{% endif %}
+    </span>
+    {% if v.ok and options %}
+    <span class="text-[10px] text-ink-faint">{{ options|length }} option{{ 's' if options|length != 1 }} · edit before sending</span>
+    {% endif %}
+    {% if not is_email and v.target and v.target.url %}
+    <a href="{{ v.target.url }}" target="_blank" rel="noopener" class="text-[10px] text-[#0A66C2] hover:underline">on {{ v.target.label }}</a>
+    {% endif %}
+  </div>
+
+  {# ---------------------------------------------- state 1: can't personalise #}
+  {% if not v.ok %}
+  <p class="text-[12.5px] font-medium text-amber-900">Not personalised for {{ step.person.full_name }}</p>
+  <p class="text-[12px] text-amber-800 mt-1 leading-relaxed">{{ v.reason }}</p>
+
+  {% if v.missing %}
+  <p class="text-[11px] font-semibold uppercase tracking-wide text-amber-700 mt-2">Not on file</p>
+  <ul class="mt-1 space-y-0.5">
+    {% for gap in v.missing %}
+    <li class="text-[12px] text-amber-800 flex gap-1.5"><span class="text-amber-400">·</span><span>{{ gap }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if v.fixes %}
+  <div class="mt-2 pt-2 border-t border-amber-100 space-y-1.5">
+    {% for key in v.fixes %}
+    <p class="text-[12px] text-amber-800 leading-relaxed">
+      {{ FIX_LABELS.get(key, key) }}
+      {% if key == 'research' %}
+      <a href="/person/{{ step.person.slug }}" class="font-medium text-violet2-600 hover:underline whitespace-nowrap">Their page →</a>
+      {% elif key == 'paste' %}
+      <a href="/person/{{ step.person.slug }}#linkedin" class="font-medium text-violet2-600 hover:underline whitespace-nowrap">Paste a post →</a>
+      {% endif %}
+    </p>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# What we do hold, so "not enough" is checkable rather than asserted. #}
+  {% if v.personal %}
+  <p class="text-[11px] text-amber-700 mt-2">On file: {% for s in v.personal %}{{ s.label }}{{ ', ' if not loop.last }}{% endfor %}</p>
+  {% endif %}
+
+  {% else %}
+  {# ------------------------------------------------- state 2 & 3: draftable #}
+
+  {% if step.person.draft_note and not options %}
+  <p class="text-[12px] text-ink-soft bg-white border border-[#EAEBEF] rounded-lg px-2.5 py-1.5 mb-2">{{ step.person.draft_note }}</p>
+  {% endif %}
+
+  {% for d in options %}
+  <div class="rounded-lg bg-white border border-violet2-100 p-2.5 {{ 'mt-2' if not loop.first }}">
+    <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
+      <span class="grid place-items-center w-4 h-4 rounded bg-violet2-100 text-violet2-700 text-[9px] font-bold shrink-0">{{ d.variant }}</span>
+      <span class="text-[11px] font-medium text-violet2-700">{{ d.angle }}</span>
+      {% if d.tone %}<span class="text-[10px] text-ink-faint">· {{ EMAIL_TONES.get(d.tone, {}).get('label', d.tone) }}</span>{% endif %}
+    </div>
+
+    {% if d.subject %}
+    <div class="flex items-baseline gap-1.5 mb-1.5 pb-1.5 border-b border-[#F2F2F5]">
+      <span class="text-[10px] uppercase tracking-wide text-ink-faint shrink-0">Subject</span>
+      <input id="draft-{{ d.id }}-subject" value="{{ d.subject }}"
+             class="flex-1 min-w-0 text-[12.5px] font-medium bg-transparent outline-none">
+      {{ copy_button('draft-' ~ d.id ~ '-subject', 'Copy') }}
+    </div>
+    {% endif %}
+
+    <textarea id="draft-{{ d.id }}-body" rows="{{ 7 if is_email else 3 }}"
+              class="w-full resize-y rounded-lg bg-[#FBFBFC] border border-[#EFEFF2] px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:bg-white focus:border-violet2-200">{{ d.body }}</textarea>
+
+    {# Length reported rather than promised, and against the limit that
+       actually matters: LinkedIn refuses a comment over its cap, and collapses
+       one past the visible run behind "…see more". #}
+    <div class="flex items-center gap-2 flex-wrap mt-1.5">
+      {# Copies what is in the box, not what the model returned, so an edit
+         made here is what lands on the clipboard. #}
+      {{ copy_button('draft-' ~ d.id ~ '-body', 'Copy ' ~ ('email' if is_email else 'comment')) }}
+      <span class="text-[10px] text-ink-faint">{{ d.word_count }} words · {{ d.char_count }} chars</span>
+      {% if not is_email %}
+        {% if d.over_linkedin_limit %}
+        <span class="text-[10px] font-medium text-rose-700">over LinkedIn's {{ LINKEDIN_COMMENT_MAX_CHARS }}-character limit</span>
+        {% elif d.char_count <= LINKEDIN_COMMENT_VISIBLE_CHARS %}
+        <span class="text-[10px] text-emerald-700">shows in full without “see more”</span>
+        {% else %}
+        <span class="text-[10px] text-amber-700">collapses after ~{{ LINKEDIN_COMMENT_VISIBLE_CHARS }} chars</span>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    {% if d.basis_lines %}
+    <p class="text-[10.5px] text-ink-faint mt-1 leading-relaxed">
+      {% for line in d.basis_lines %}{{ line }}{{ ' · ' if not loop.last }}{% endfor %}
+    </p>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {# --------------------------------------------------------- the controls #}
+  <form method="post" action="/outreach/{{ step.id }}/suggest"
+        class="flex items-end gap-2 flex-wrap {{ 'mt-2.5 pt-2.5 border-t border-violet2-100' if options else '' }}">
+    <input type="hidden" name="back" value="{{ back }}">
+
+    {% if is_email %}
+    <label class="block">
+      <span class="block text-[10px] uppercase tracking-wide text-ink-faint mb-0.5">Tone</span>
+      <select name="tone" class="h-8 px-2 rounded-lg bg-white border border-[#E2E3E8] text-[12px] outline-none focus:border-violet2-300">
+        {% for key, spec in EMAIL_TONES.items() %}
+        <option value="{{ key }}" {{ 'selected' if (last.tone if last else DEFAULT_EMAIL_TONE) == key }}>{{ spec.label }} — {{ spec.note }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% endif %}
+
+    <label class="block">
+      <span class="block text-[10px] uppercase tracking-wide text-ink-faint mb-0.5">Length</span>
+      {% set bands = EMAIL_LENGTHS if is_email else COMMENT_LENGTHS %}
+      {% set fallback = DEFAULT_EMAIL_LENGTH if is_email else DEFAULT_COMMENT_LENGTH %}
+      <select name="length" class="h-8 px-2 rounded-lg bg-white border border-[#E2E3E8] text-[12px] outline-none focus:border-violet2-300">
+        {% for key, spec in bands.items() %}
+        <option value="{{ key }}" {{ 'selected' if (last.length if last else fallback) == key }}>{{ spec.label }} ({{ spec.words[0] }}-{{ spec.words[1] }} words) — {{ spec.note }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <button class="h-8 px-3 rounded-lg bg-violet2-600 hover:bg-violet2-700 text-white text-[12px] font-medium">
+      {% if options %}Regenerate{% else %}Suggest {{ OPTION_COUNT }} options{% endif %}
+    </button>
+  </form>
+
+  {% if options %}
+  <form method="post" action="/outreach/{{ step.id }}/drafts/clear" class="mt-1.5">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="text-[11px] text-ink-faint hover:text-rose-600">Discard these options</button>
+  </form>
+  {% else %}
+  <p class="text-[10.5px] text-ink-faint mt-1.5">One model call. Written from
+    {% for s in v.personal[:3] %}{{ s.label }}{{ ', ' if not loop.last }}{% endfor %}{% if v.personal|length > 3 %} and {{ v.personal|length - 3 }} more{% endif %}.</p>
+  {% endif %}
+
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+
 {# One actionable task. Used on the Outreach board and on a person's page, so
    the two can never disagree about what a step offers. `back` is where the
    forms return to; main._safe_back rejects anything that leaves the app. #}
