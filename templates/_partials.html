@@ -34,6 +34,23 @@
 {% endmacro %}
 
 
+{# Copy-to-clipboard for a drafted message. Goes in the header row of a block
+   marked data-copy-block; the handler in base.html copies that block's
+   textarea. It reads the box's *current* value, so an edit made before
+   copying is what lands on the clipboard rather than the stored draft — the
+   textarea is a scratchpad, and copying the pre-edit text would quietly undo
+   the edit. Every draft shares one delegated listener, so a new draft site
+   gets this by adding the wrapper and this macro, with no new script. #}
+{% macro copy_button() %}
+<button type="button" data-copy
+        class="ml-auto inline-flex items-center gap-1 shrink-0 text-[10px] font-semibold uppercase tracking-wide
+               text-violet2-600 hover:text-violet2-700 border border-violet2-200 bg-white rounded px-1.5 py-0.5">
+  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+  <span data-copy-label>Copy</span>
+</button>
+{% endmacro %}
+
+
 {% macro status_badge(status, label) %}
   {% if status == 'complete' %}
     <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">{{ label }}</span>
@@ -350,8 +367,9 @@
     </div>
     {% if person.focus_line %}
     <p class="mt-3.5 text-[13.5px] leading-relaxed"><b>Focus:</b> {{ person.focus_line }}</p>
+    {% set corroborated_findings = person.findings|selectattr('corroborated')|list %}
     <p class="mt-2 text-[11px] text-ink-faint">Derived from {{ person.activities|length }} LinkedIn {{ 'activity' if person.activities|length == 1 else 'activities' }}
-      and {{ person.findings|length }} web {{ 'finding' if person.findings|length == 1 else 'findings' }}
+      and {{ corroborated_findings|length }} web {{ 'finding' if corroborated_findings|length == 1 else 'findings' }}
       · generated {{ person.focus_generated_at|short_date }}
       {% if person.focus_model %}· {{ person.focus_model }}{% endif %}
       · hover a chip for its evidence</p>
@@ -387,10 +405,38 @@
       <svg class="w-[19px] h-[19px] text-[#0A66C2] mt-0.5 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3A2 2 0 0 1 21 5v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14M8.6 18.3v-7H6.3v7h2.3M7.4 10a1.3 1.3 0 1 0 0-2.7 1.3 1.3 0 0 0 0 2.7m10.9 8.3v-4c0-2.1-1.1-3.1-2.6-3.1a2.3 2.3 0 0 0-2 1.1v-1H11.4c0 .7 0 7 0 7h2.3v-3.9c0-.2 0-.4.1-.6.2-.4.5-.9 1.2-.9.9 0 1.2.7 1.2 1.7v3.7h2.2Z"/></svg>
       <div>
         <h3 class="text-[15px] font-bold leading-tight">Top 5 LinkedIn Activity</h3>
-        <p class="text-[11.5px] text-ink-faint mt-0.5">Posts · Reposts · Comments · Tagged — found by search or added by hand, never scraped</p>
+        <p class="text-[11.5px] text-ink-faint mt-0.5">Posts · Reposts · Comments · Tagged — found by search or added by hand, never scraped
+          {%- if person.linkedin_refreshed_at %} · last refreshed {{ person.linkedin_refreshed_at|relative_time }}{% endif %}</p>
       </div>
     </div>
     <div class="flex items-center gap-2 shrink-0">
+      {# Not gated on allow_add: refreshing is a single, low-friction action
+         (unlike pasting an activity or drafting comments, which need more
+         room than the compact Home embed has), and it belongs wherever this
+         panel is shown — a stale LinkedIn snapshot on the Home dashboard is
+         just as stale as one on the full page. #}
+      {% if person.linkedin_refreshing %}
+      <span class="inline-flex items-center gap-1.5 text-[11.5px] font-medium px-2.5 py-1 rounded-lg border border-violet2-100 bg-violet2-50 text-violet2-600">
+        <svg class="w-3 h-3 spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-9-9"/></svg>
+        Refreshing…
+      </span>
+      {# The work runs in a background thread while this page is plain static
+         HTML, so without this the spinner sits there after the refresh has
+         already landed and a finished run reads as a hang — which is exactly
+         how it looked in use. Reloads until the flag clears; rendered only
+         while a refresh is actually in flight, so it can't loop forever. With
+         JS off it degrades to what it did before: reload the page yourself. #}
+      <script>setTimeout(function () { location.reload(); }, 4000);</script>
+      {% elif person.can_refresh_linkedin %}
+      <form method="post" action="/person/{{ person.slug }}/refresh-linkedin" class="inline-flex">
+        <input type="hidden" name="back" value="{{ '/person/' + person.slug + '#linkedin' if allow_add else '/?selected=' + person.slug + '#linkedin' }}">
+        <button class="inline-flex items-center gap-1.5 text-[11.5px] font-medium px-2.5 py-1 rounded-lg border border-[#EAEBEF] bg-white hover:bg-[#F4F4F6] text-ink-soft"
+                title="Search LinkedIn again for this contact's latest activity. Uses API credits.">
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>
+          Refresh
+        </button>
+      </form>
+      {% endif %}
       {% if allow_add and person.activities %}
       <form method="post" action="/person/{{ person.slug }}/suggest-comments">
         <input type="hidden" name="back" value="/person/{{ person.slug }}#linkedin">
@@ -443,11 +489,23 @@
            textarea so it can be selected and edited before sending. Editing
            here is not saved — it is a scratchpad for the copy you paste into
            LinkedIn, and the stored draft stays as generated. #}
-        <div class="mt-2 rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5">
-          <div class="flex items-center gap-1.5 mb-1.5">
+        <div class="mt-2 rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5" data-copy-block>
+          <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
             <svg class="w-3.5 h-3.5 text-violet2-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             <span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-600">Recommended comment</span>
             <span class="text-[10px] text-ink-faint">· edit before sending</span>
+            {# The post this comment is for, opened from the block that holds
+               the comment: copy the text, open the post, paste. The row's own
+               "Open on LinkedIn" link is suppressed below when this is shown,
+               so the same URL isn't offered twice in one row. #}
+            {% if a.url %}
+            <a href="{{ a.url }}" target="_blank" rel="noopener"
+               class="inline-flex items-center gap-1 text-[10px] font-semibold text-[#0A66C2] hover:underline">
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+              Open the post to comment
+            </a>
+            {% endif %}
+            {{ copy_button() }}
           </div>
           <textarea rows="2" class="w-full resize-y rounded-lg bg-white border border-violet2-100 px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-violet2-200">{{ a.suggested_comment }}</textarea>
           <p class="text-[10px] text-ink-faint mt-1">Drafted from this post only
@@ -461,7 +519,9 @@
         </div>
         {% endif %}
         <div class="flex items-center gap-3 flex-wrap">
-          {% if a.url %}
+          {# Not when a drafted comment is shown: its block already links this
+             same post, right beside the text being pasted into it. #}
+          {% if a.url and not a.suggested_comment %}
           <a href="{{ a.url }}" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 text-[11px] text-[#0A66C2] hover:underline mt-1.5">
             <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
             Open on LinkedIn{% if a.activity_date %} · {{ a.activity_date|short_date }}{% endif %}
@@ -505,6 +565,12 @@
   {% if error %}
   <div class="mt-3 rounded-lg bg-rose-50 border border-rose-100 px-3 py-2">
     <p class="text-[12px] text-rose-700">{{ error }}</p>
+  </div>
+  {% endif %}
+
+  {% if not person.linkedin_refreshing and person.linkedin_refresh_error %}
+  <div class="mt-3 rounded-lg bg-rose-50 border border-rose-100 px-3 py-2">
+    <p class="text-[12px] text-rose-700">Last refresh failed: {{ person.linkedin_refresh_error }}</p>
   </div>
   {% endif %}
 
@@ -560,7 +626,7 @@
       <svg class="w-[19px] h-[19px] text-teal-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
       <div>
         <h3 class="text-[15px] font-bold leading-tight">Top 5 Google / Web Activity</h3>
-        <p class="text-[11.5px] text-ink-faint mt-0.5">Automated — searched, not scraped. LinkedIn is excluded; it has its own panel</p>
+        <p class="text-[11.5px] text-ink-faint mt-0.5">Automated — searched, not scraped. LinkedIn is excluded; it has its own panel. Thin on this person, and company news fills the rest</p>
       </div>
     </div>
     <span class="text-[11px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2.5 py-1 shrink-0">{{ person.findings|length }} found</span>
@@ -578,6 +644,9 @@
           {% if f.corroborated %}
           <span class="text-[10px] font-semibold uppercase tracking-wide border rounded px-1.5 py-0.5 bg-emerald-50 border-emerald-100 text-emerald-700 cursor-help"
                 title="Confirmed as this person — {{ f.corroboration }}. Used for interest chips.">confirmed</span>
+          {% elif f.about_company %}
+          <span class="text-[10px] font-semibold uppercase tracking-wide border rounded px-1.5 py-0.5 bg-violet2-50 border-violet2-200 text-violet2-700 cursor-help"
+                title="General news about {{ person.company.name if person.company else 'the company' }}, not about {{ person.first_name or 'this person' }} specifically — shown because too little turned up about them individually. Not used for interest chips.">company news</span>
           {% else %}
           <span class="text-[10px] font-semibold uppercase tracking-wide border rounded px-1.5 py-0.5 bg-amber-50 border-amber-100 text-amber-800 cursor-help"
                 title="A search for this name returned it, but nothing ties it to this particular person — it may be a namesake. Not used for interest chips.">identity unconfirmed</span>
@@ -598,7 +667,7 @@
   <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
     <svg class="w-7 h-7 mx-auto text-ink-faint/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <p class="text-[13px] font-medium mt-2">Nothing found on the web</p>
-    <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Searched, and nothing came back that could be tied to this person — a result has to be on the company's site, or name them alongside their title and employer. linkedin.com is excluded here on purpose: it belongs to the LinkedIn Activity panel. Namesakes are discarded rather than shown with a caveat. Common for mid-level roles; not a failed run.</p>
+    <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Searched, and nothing came back that could be tied to this person, nor any company news to fall back on. A personal result has to be on the company's site, or name them alongside their title and employer; namesakes are discarded rather than shown with a caveat. linkedin.com is excluded here on purpose: it belongs to the LinkedIn Activity panel. Common for a small or quiet company; not a failed run.</p>
   </div>
   {% endif %}
 </section>
@@ -789,11 +858,12 @@
       {% set drafted = step.person.activities|selectattr('suggested_comment')|list %}
       {% if drafted %}
       {% set pick = drafted[0] if step.step_key == 'comment_1' else (drafted[1] if drafted|length > 1 else drafted[0]) %}
-      <div class="mt-2 rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5">
+      <div class="mt-2 rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5" data-copy-block>
         <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
           <span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-600">Recommended comment</span>
           {% if pick.url %}<a href="{{ pick.url }}" target="_blank" rel="noopener" class="text-[10px] text-[#0A66C2] hover:underline">on their {{ pick.type_label|lower }}{% if pick.activity_date %} of {{ pick.activity_date|short_date }}{% endif %}</a>{% endif %}
           <span class="text-[10px] text-ink-faint">· edit before sending</span>
+          {{ copy_button() }}
         </div>
         <textarea rows="2" class="w-full resize-y rounded-lg bg-white border border-violet2-100 px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-violet2-200">{{ pick.suggested_comment }}</textarea>
       </div>

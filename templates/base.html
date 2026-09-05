@@ -19,6 +19,15 @@
   .subnav-scroll{overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
   .subnav-scroll::-webkit-scrollbar{display:none}   /* a 9px bar in a 56px strip */
   .subnav-scroll>a{white-space:nowrap}
+
+  /* The LinkedIn refresh spinner, for the same reason as .subnav above:
+     Tailwind's animate-spin and its keyframes were purged from the prebuilt
+     sheet as unused, so the icon sat there as a motionless arc — which reads
+     as a hung refresh, the exact impression a spinner exists to prevent.
+     transform-origin is set explicitly so the arc turns about its own centre
+     rather than the top-left corner. */
+  @keyframes pi-spin{to{transform:rotate(360deg)}}
+  .spin{animation:pi-spin 1s linear infinite;transform-origin:50% 50%}
 </style>
 {% block head %}{% endblock %}
 </head>
@@ -96,6 +105,53 @@
 <main class="min-w-0 p-4 lg:p-6">
   {% block content %}{% endblock %}
 </main>
+
+{# Copy buttons on drafted messages. JavaScript because the clipboard has no
+   HTML-only equivalent — a form cannot put text on it. One delegated listener
+   for the whole app rather than a handler per draft: the outreach board can
+   show a dozen, and any new draft site is covered by the wrapper alone.
+   Degrades to what it did before: the text sits in a textarea and can be
+   selected and copied by hand. #}
+<script>
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-copy]');
+  if (!btn) return;
+  var block = btn.closest('[data-copy-block]');
+  var field = block && block.querySelector('textarea');
+  if (!field) return;
+
+  var label = btn.querySelector('[data-copy-label]');
+  var original = label ? label.textContent : '';
+  function say(text) {
+    if (!label) return;
+    label.textContent = text;
+    setTimeout(function () { label.textContent = original; }, 1500);
+  }
+
+  // Selecting the text first means the fallback works and, either way, the
+  // user can see what was taken. field.value, not the stored draft: the box
+  // is editable on purpose, so an edit made here is what should be copied.
+  function selectAndExec() {
+    field.focus();
+    field.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    say(ok ? 'Copied' : 'Press Ctrl+C');
+  }
+
+  // navigator.clipboard exists only in a secure context. On localhost it is
+  // there; served over plain http from a LAN address it is not, hence the
+  // fallback rather than a button that silently does nothing.
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(field.value).then(
+      function () { say('Copied'); },
+      function () { selectAndExec(); }
+    );
+  } else {
+    selectAndExec();
+  }
+});
+</script>
 
 </body>
 </html>

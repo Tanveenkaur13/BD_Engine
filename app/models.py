@@ -225,6 +225,18 @@ class Person(Base):
     linkedin_observed_source = Column(String)
     linkedin_observed_at = Column(DateTime)
 
+    # --- a standalone re-run of just the LinkedIn Activity panel, separate
+    #     from the once-only Research button below. LinkedIn's own feed moves
+    #     daily, so a search-found activity list from weeks ago goes stale in
+    #     a way the rest of the record doesn't — see can_refresh_linkedin and
+    #     pipeline.refresh_linkedin. `linkedin_refreshing` guards against a
+    #     second click landing mid-run, the same job research_status/RUNNING
+    #     does for the full pipeline, but kept separate so refreshing this one
+    #     panel doesn't flip the whole record back to "Researching…".
+    linkedin_refreshing = Column(Boolean, default=False)
+    linkedin_refreshed_at = Column(DateTime)
+    linkedin_refresh_error = Column(String)
+
     # --- derived: the "Current Focus" sentence under the interest chips
     focus_line = Column(Text)
     focus_generated_at = Column(DateTime)
@@ -449,6 +461,22 @@ class Person(Base):
         """
         return self.research_status in (RESEARCH_PENDING, RESEARCH_FAILED)
 
+    @property
+    def can_refresh_linkedin(self):
+        """Whether to offer a standalone LinkedIn refresh.
+
+        Unlike can_research, this stays offered after the first run and every
+        run after — LinkedIn Activity is the one panel here that's genuinely
+        time-sensitive, so re-checking it isn't the one-shot, credit-conscious
+        act the full Research button is. Only withheld while the initial
+        Research hasn't completed at least once (nothing to refresh yet — use
+        Research instead) or while a run of either kind is already in flight.
+        """
+        return (
+            self.research_status == RESEARCH_DONE
+            and not self.linkedin_refreshing
+        )
+
     def recompute_status(self, research_failed=False, note=None):
         """The single place either status is decided.
 
@@ -556,6 +584,14 @@ class WebFinding(Base):
     # corroborated is shown last and never used to derive an interest chip.
     corroborated = Column(Boolean, default=False)
     corroboration = Column(String)    # what tied it to them, for the tooltip
+
+    # True for a row that isn't about this person at all — company-news
+    # filler used when the searches above didn't turn up enough that could be
+    # tied to the contact. Always corroborated=False, by construction: it
+    # never derives an interest chip or an inferred employer (both skip
+    # anything uncorroborated already), it just keeps the panel from sitting
+    # empty. See research.research_person.
+    about_company = Column(Boolean, default=False)
 
     @property
     def clean_snippet(self):

@@ -138,6 +138,14 @@ def people_q(db):
 @app.on_event("startup")
 def startup():
     init_db()
+    # A LinkedIn refresh runs in a daemon thread, so nothing survives a
+    # restart. Anything still flagged as refreshing is a leftover from a
+    # killed process, and would otherwise sit at "Refreshing…" for good.
+    db = SessionLocal()
+    try:
+        pipeline.clear_orphaned_refreshes(db)
+    finally:
+        db.close()
 
 
 # ----------------------------------------------------------------- routes
@@ -206,6 +214,8 @@ ACTIVITY_ERRORS = {
     "badtype": "That activity type isn't one of Post, Repost, Comment or Tagged.",
     "nores": "Research is already running or already done for this contact. "
              "Re-running costs API credits — use run_pipeline.py --force.",
+    "nolirefresh": "LinkedIn is already refreshing, or this contact hasn't "
+                   "been researched yet — run Research first.",
 }
 
 
@@ -377,6 +387,30 @@ def research_person_now(slug: str, back: str = Form(""),
     pipeline.mark_running(db, person)
     pipeline.research_in_background(slug)
     return RedirectResponse(target or f"/person/{slug}", status_code=303)
+
+
+@app.post("/person/{slug}/refresh-linkedin")
+def refresh_linkedin_now(slug: str, back: str = Form(""),
+                         db: Session = Depends(get_session)):
+    """Re-run just the LinkedIn Activity search for one contact.
+
+    Separate from /research on purpose: LinkedIn's own feed moves daily, so
+    this one panel is offered again and again rather than the once-only
+    Research button — see Person.can_refresh_linkedin.
+    """
+    person = db.query(Person).filter(Person.slug == slug).first()
+    if not person:
+        return RedirectResponse("/people", status_code=303)
+
+    target = back if back.startswith("/") and not back.startswith("//") else ""
+
+    if not person.can_refresh_linkedin:
+        return RedirectResponse(f"/person/{slug}?err=nolirefresh", status_code=303)
+
+    person.linkedin_refreshing = True
+    db.commit()
+    pipeline.refresh_linkedin_in_background(slug)
+    return RedirectResponse(target or f"/person/{slug}#linkedin", status_code=303)
 
 
 @app.get("/outreach", response_class=HTMLResponse)

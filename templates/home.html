@@ -126,6 +126,16 @@
       {{ ui.summary_panel(person) }}
       {{ ui.interests_panel(person) }}
 
+      {# It sits here rather than in the left column because company_card's
+         responsive classes are Tailwind's viewport breakpoints, not container
+         queries: in a 380px rail `sm:flex-row` and `lg:grid-cols-2` still fire
+         at a desktop window size, putting the logo beside the prose and the
+         facts into two columns that a 380px rail cannot hold — which rendered
+         the website value one character per line. #}
+      {% if person.company %}
+        {{ ui.company_card(person.company) }}
+      {% endif %}
+
       <div class="grid lg:grid-cols-2 gap-4">
         {{ ui.linkedin_panel(person, allow_add=False) }}
         {{ ui.web_panel(person) }}
@@ -137,30 +147,21 @@
       </div>
     {% endif %}
 
-    {# Who they work for, directly above what we can sell them — the
-       opportunities panel argues from this company's own record, so the two
-       read as one thought.
-
-       It sits here rather than in the left column because company_card's
-       responsive classes are Tailwind's viewport breakpoints, not container
-       queries: in a 380px rail `sm:flex-row` and `lg:grid-cols-2` still fire
-       at a desktop window size, putting the logo beside the prose and the
-       facts into two columns that a 380px rail cannot hold — which rendered
-       the website value one character per line. #}
-    {% if person and person.company %}
-      {{ ui.company_card(person.company) }}
-    {% endif %}
-
+    {# Directly above what we can sell them — the opportunities panel argues
+       from this company's own record, so the two read as one thought. #}
     {{ ui.opportunities_panel(person) }}
   </div>
 </div>
 
 {# ------------------------------------------------------------ the divider #}
-{# The only JavaScript in this app. A drag handle cannot be a form, and the
-   CSS-only alternative (resize:horizontal) needs overflow:hidden on the
-   column, which clips the card shadows and hides the grabber in a corner
-   nobody finds. It degrades cleanly: with JS off the divider is inert and the
-   layout is the 380px it has always been. #}
+{# One of the three pieces of JavaScript in this app (the others: the reload
+   timer in _partials.html's linkedin_panel, which polls a refresh running in
+   a background thread, and the copy-to-clipboard handler in base.html).
+   A drag handle cannot be a form, and the CSS-only
+   alternative (resize:horizontal) needs overflow:hidden on the column, which
+   clips the card shadows and hides the grabber in a corner nobody finds. It
+   degrades cleanly: with JS off the divider is inert and the layout is the
+   380px it has always been. #}
 <script>
 (function () {
   var split = document.getElementById('home-split');

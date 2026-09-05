@@ -32,6 +32,45 @@ class Blocked(RuntimeError):
     """
 
 
+def refresh_linkedin(db, person):
+    """Re-run just the LinkedIn Activity search for one contact.
+
+    Extracted out of research_contact so the full pipeline and the standalone
+    Refresh button run exactly this, and only this, step — the module
+    docstring's reason for research_contact existing at all applies just as
+    much to a second copy of its LinkedIn block.
+
+    Only search-found rows are ever touched; anything pasted by hand is never
+    replaced (see the `pasted` filter below). A previous search run's rows are
+    replaced only when this one actually turns something up, so a transient
+    empty result can't wipe out what's already shown — the same guard
+    research_contact's own LinkedIn step already relied on.
+
+    Returns the number of activities found this run. Raises Blocked when the
+    API refuses the run outright (no key, bad key, no credits).
+    """
+    pasted = [a for a in person.activities if not a.from_search]
+    room = MAX_ACTIVITIES - len(pasted)
+    if room <= 0:
+        return 0
+    found, observed = research.find_linkedin_activity(person, limit=room)
+    if observed:
+        person.linkedin_observed = observed["url"]
+        person.linkedin_observed_source = observed["evidence"][:600]
+        person.linkedin_observed_at = observed["fetched_at"]
+        db.commit()
+    known = {research.clean_activity_url(a.url) for a in pasted}
+    found = [f for f in found if f["url"] not in known]
+    if found:
+        for old_row in [a for a in person.activities if a.from_search]:
+            db.delete(old_row)
+        db.flush()
+        for i, row in enumerate(found, start=len(pasted) + 1):
+            db.add(LinkedInActivity(person=person, **dict(row, rank=i)))
+        db.commit()
+    return len(found)
+
+
 def research_contact(db, person, skip_interests=False, skip_linkedin=False,
                      skip_resolve=False, force=False):
     """Run every research step for one contact and commit as it goes.
@@ -102,30 +141,7 @@ def research_contact(db, person, skip_interests=False, skip_linkedin=False,
     # these, so they have to exist first.
     if not skip_linkedin:
         try:
-            pasted = [a for a in person.activities if not a.from_search]
-            room = MAX_ACTIVITIES - len(pasted)
-            if room > 0:
-                found, observed = research.find_linkedin_activity(person,
-                                                                  limit=room)
-                if observed:
-                    # The profile they post from, which the file doesn't have.
-                    # Recorded beside linkedin_url, never over it.
-                    person.linkedin_observed = observed["url"]
-                    person.linkedin_observed_source = observed["evidence"][:600]
-                    person.linkedin_observed_at = observed["fetched_at"]
-                    db.commit()
-                # Never touch what a person typed in; replace only what a
-                # previous search run put there.
-                known = {research.clean_activity_url(a.url) for a in pasted}
-                found = [f for f in found if f["url"] not in known]
-                if found:
-                    for old_row in [a for a in person.activities if a.from_search]:
-                        db.delete(old_row)
-                    db.flush()
-                    for i, row in enumerate(found, start=len(pasted) + 1):
-                        db.add(LinkedInActivity(person=person, **dict(row, rank=i)))
-                    out["activities"] = len(found)
-                    db.commit()
+            out["activities"] = refresh_linkedin(db, person)
         except (research.FirecrawlNotConfigured, research.FirecrawlRejected) as e:
             raise Blocked(str(e)) from e
         except Exception as e:
@@ -208,3 +224,61 @@ def mark_running(db, person):
     person.research_status = RESEARCH_RUNNING
     person.status_note = None
     db.commit()
+
+
+def clear_orphaned_refreshes(db):
+    """Reset any linkedin_refreshing flag left set by a killed process.
+
+    The refresh runs in a daemon thread, so it cannot outlive the process that
+    started it: a restart, a crash or a --reload mid-run leaves the flag set
+    with nothing still working on it. The panel would then show "Refreshing…"
+    forever and never offer the button again, with no way back from the UI.
+    Anything still marked refreshing at startup is by definition an orphan.
+
+    Returns how many were cleared.
+    """
+    stuck = db.query(Person).filter(Person.linkedin_refreshing == True).all()  # noqa: E712
+    for person in stuck:
+        person.linkedin_refreshing = False
+        person.linkedin_refresh_error = (
+            "Interrupted — the server restarted while this refresh was running."
+        )
+    if stuck:
+        db.commit()
+    return len(stuck)
+
+
+def refresh_linkedin_in_background(slug):
+    """Start a standalone LinkedIn refresh for one contact and return.
+
+    Mirrors research_in_background, but tracks its own flag
+    (linkedin_refreshing) rather than research_status — this is a re-check of
+    one panel, not a re-run of the whole record, so it shouldn't flip the
+    contact back to "Researching…" or block the (separate) Research button.
+    """
+    def run():
+        db = SessionLocal()
+        try:
+            person = db.query(Person).filter(Person.slug == slug).first()
+            if person is None:
+                return
+            try:
+                refresh_linkedin(db, person)
+                person.linkedin_refresh_error = None
+            except Exception as e:                     # never leave it stuck
+                # research.FirecrawlNotConfigured/FirecrawlRejected included:
+                # refresh_linkedin doesn't wrap them in Blocked the way
+                # research_contact's caller does, since this run has no
+                # further steps for a Blocked/Exception split to matter to.
+                person.linkedin_refresh_error = str(e)[:200]
+            finally:
+                person.linkedin_refreshing = False
+                person.linkedin_refreshed_at = datetime.now(timezone.utc)
+                db.commit()
+        finally:
+            db.close()
+
+    thread = threading.Thread(target=run, name=f"linkedin-refresh:{slug}",
+                              daemon=True)
+    thread.start()
+    return thread
