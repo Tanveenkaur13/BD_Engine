@@ -48,6 +48,8 @@ ADDED_COLUMNS = {
         ("linkedin_found_at", "DATETIME"),
         ("identity_note", "VARCHAR"),
         ("draft_note", "VARCHAR"),
+        ("outreach_rejected_at", "DATETIME"),
+        ("outreach_reject_reason", "VARCHAR"),
         ("linkedin_observed", "VARCHAR"),
         ("linkedin_observed_source", "VARCHAR"),
         ("linkedin_observed_at", "DATETIME"),

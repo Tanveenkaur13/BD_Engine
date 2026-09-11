@@ -75,11 +75,13 @@ ORDER = [s["key"] for s in SEQUENCE]
 STAGE_NEW = "new"                  # nobody has started
 STAGE_IN_PROGRESS = "in_progress"  # started, steps still open
 STAGE_DONE = "done"                # every step closed
+STAGE_REJECTED = "rejected"        # decided against, at any stage
 
 STAGE_LABELS = {
     STAGE_NEW: "New",
     STAGE_IN_PROGRESS: "In progress",
     STAGE_DONE: "Sequence complete",
+    STAGE_REJECTED: "Rejected",
 }
 
 
@@ -209,6 +211,42 @@ def skip(db, step, reason=None):
     return created
 
 
+def reject(db, person, reason=None):
+    """Decide against approaching this contact. Reversible.
+
+    Not a skip and not a finished sequence: both of those record work that was
+    done, and this records a decision that none will be. Any open step is left
+    exactly as it is rather than closed — if the contact is restored, they pick
+    up where they were, and the trail does not gain a fictional "skipped" entry
+    for a step nobody considered. open_steps excludes them meanwhile, so the
+    parked step cannot keep arriving in today's list.
+
+    Idempotent: rejecting an already-rejected contact leaves the original
+    timestamp, because the date it was decided is the useful one.
+    """
+    if person.outreach_rejected:
+        return False
+    person.outreach_rejected_at = datetime.now(timezone.utc)
+    person.outreach_reject_reason = (reason or "").strip() or None
+    db.commit()
+    return True
+
+
+def restore(db, person):
+    """Undo a rejection, putting the contact back where they were.
+
+    The reason goes with it. Keeping it would leave a contact sitting in New
+    carrying an explanation of why they were once turned down, which reads as
+    though the rejection still stands.
+    """
+    if not person.outreach_rejected:
+        return False
+    person.outreach_rejected_at = None
+    person.outreach_reject_reason = None
+    db.commit()
+    return True
+
+
 def reschedule(db, step, new_date):
     """Move an open step's due date. The rest of the sequence still follows
     from actual completion, so only this step moves."""
@@ -224,10 +262,15 @@ def reschedule(db, step, new_date):
 
 def open_steps(db):
     """Every open step, soonest due first."""
-    from .models import OutreachStep
+    from .models import OutreachStep, Person
+    # Rejected contacts are filtered here rather than at each call site, so
+    # every consumer inherits it — today's list, the header bell and the board
+    # all stop offering a task for someone we decided against.
     return (db.query(OutreachStep)
+            .join(Person, OutreachStep.person_id == Person.id)
             .filter(OutreachStep.done_at.is_(None),
-                    OutreachStep.skipped_at.is_(None))
+                    OutreachStep.skipped_at.is_(None),
+                    Person.outreach_rejected_at.is_(None))
             .order_by(OutreachStep.due_date.asc())
             .all())
 

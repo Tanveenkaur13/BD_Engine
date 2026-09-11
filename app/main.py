@@ -267,6 +267,10 @@ OUTREACH_ERRORS = {
              "see the Settings page.",
     "draft": "Drafting failed. The reason is on the contact's page, under the "
              "step it was drafted for.",
+    "already_rejected": "That contact was already rejected, so nothing "
+                        "changed. The original date stands.",
+    "not_rejected": "That contact was not rejected, so there was nothing to "
+                    "restore.",
 }
 
 
@@ -480,15 +484,22 @@ def outreach_board(request: Request, db: Session = Depends(get_session),
     validated against the known sheets so a bad value lands on Today rather
     than rendering an empty page.
     """
-    if view not in ("today", "new", "active", "done"):
+    if view not in ("today", "new", "active", "done", "rejected"):
         view = "today"
 
     everyone = people_q(db).all()
     people = [p for p in everyone if segments.matches(p, country, category)]
 
+    # outreach_stage puts rejection ahead of every other stage, so a rejected
+    # contact leaves New / In progress / Complete by construction here.
     new = [p for p in people if p.outreach_stage == outreach.STAGE_NEW]
     active = [p for p in people if p.outreach_stage == outreach.STAGE_IN_PROGRESS]
     done = [p for p in people if p.outreach_stage == outreach.STAGE_DONE]
+    rejected = [p for p in people if p.outreach_stage == outreach.STAGE_REJECTED]
+    # Most recently turned down first: that is the decision someone is most
+    # likely to be revisiting.
+    rejected.sort(key=lambda p: p.outreach_rejected_at or datetime.min,
+                  reverse=True)
     # Soonest first inside the active column, so the top of the list is the
     # work that matters next.
     active.sort(key=lambda p: (p.outreach_open.due_date if p.outreach_open
@@ -506,6 +517,7 @@ def outreach_board(request: Request, db: Session = Depends(get_session),
         request, "outreach.html",
         ctx(request, db, nav="outreach", view=view,
             outreach_error=OUTREACH_ERRORS.get(err), new_people=new,
+            rejected=rejected,
             active=active, done=done, sequence=outreach.SEQUENCE,
             due_here=due_here, country=country, category=category,
             country_options=segments.country_options(everyone),
@@ -524,6 +536,39 @@ def outreach_start(slug: str, back: str = Form(""),
     # Discarding that made the redirect indistinguishable from success.
     if outreach.start(db, person) is None:
         return RedirectResponse(_with_err(target, "finished"), status_code=303)
+    return RedirectResponse(target, status_code=303)
+
+
+@app.post("/person/{slug}/outreach/reject")
+def outreach_reject(slug: str, reason: str = Form(""), back: str = Form(""),
+                    db: Session = Depends(get_session)):
+    """Decide against approaching this contact.
+
+    Reversible, and it closes nothing: see outreach.reject. The redirect goes
+    to the Rejected sheet by default so the decision is visibly recorded rather
+    than the contact just vanishing from the list.
+    """
+    person = db.query(Person).filter(Person.slug == slug).first()
+    if not person:
+        return RedirectResponse("/people", status_code=303)
+    target = _safe_back(back, "/outreach?view=rejected")
+    if not outreach.reject(db, person, reason=reason):
+        return RedirectResponse(_with_err(target, "already_rejected"),
+                                status_code=303)
+    return RedirectResponse(target, status_code=303)
+
+
+@app.post("/person/{slug}/outreach/restore")
+def outreach_restore(slug: str, back: str = Form(""),
+                     db: Session = Depends(get_session)):
+    """Put a rejected contact back where they were."""
+    person = db.query(Person).filter(Person.slug == slug).first()
+    if not person:
+        return RedirectResponse("/people", status_code=303)
+    target = _safe_back(back, "/outreach?view=rejected")
+    if not outreach.restore(db, person):
+        return RedirectResponse(_with_err(target, "not_rejected"),
+                                status_code=303)
     return RedirectResponse(target, status_code=303)
 
 

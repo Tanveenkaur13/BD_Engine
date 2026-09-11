@@ -1130,6 +1130,118 @@
 {% endmacro %}
 
 
+{# ---------------------------------------------------------------------------
+   The drafted comment for a comment step. Shared, because the list row and the
+   task dialog both want it and neither should own it.
+--------------------------------------------------------------------------- #}
+{% macro outreach_comment_draft(step, rows=2) %}
+{% set drafted = step.person.activities|selectattr('suggested_comment')|list %}
+{% if drafted %}
+{% set pick = drafted[0] if step.step_key == 'comment_1' else (drafted[1] if drafted|length > 1 else drafted[0]) %}
+<div class="rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5" data-copy-block>
+  <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
+    <span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-600">Suggested comment</span>
+    {% if pick.url %}<a href="{{ pick.url }}" target="_blank" rel="noopener" class="text-[10px] text-[#0A66C2] hover:underline">on their {{ pick.type_label|lower }}{% if pick.activity_date %} of {{ pick.activity_date|short_date }}{% endif %}</a>{% endif %}
+    <span class="text-[10px] text-ink-faint">· edit before sending</span>
+    {{ copy_button() }}
+  </div>
+  <textarea rows="{{ rows }}" class="w-full resize-y rounded-lg bg-white border border-violet2-100 px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-violet2-200">{{ pick.suggested_comment }}</textarea>
+</div>
+{% else %}
+<p class="text-[11.5px] text-ink-faint">No comment drafted yet — open
+  <a href="/person/{{ step.person.slug }}#linkedin" class="text-violet2-600 hover:underline">their LinkedIn panel</a>
+  and use “Draft comments”.</p>
+{% endif %}
+{% endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   The three things you can do to a step: finish it, move it, or skip it.
+
+   One definition of the actions, two layouts. A list row has a wide, shallow
+   space and wants them on one line; a dialog has a narrow, tall one and the
+   same line overflowed — the primary button ended up overlapping the "or" and
+   the date field. So `stacked` changes the arrangement only. The forms, the
+   routes and the field names are identical either way, which is the part that
+   must not diverge.
+
+   In the stacked layout the fields get visible labels rather than placeholders.
+   A placeholder disappears the moment someone types, and "Note" on its own
+   never said what the note was for.
+--------------------------------------------------------------------------- #}
+{% macro outreach_actions(step, back, stacked=False) %}
+{% if stacked %}
+
+<div class="pt-3 border-t border-[#F2F2F5]">
+  <form method="post" action="/outreach/{{ step.id }}/done">
+    <input type="hidden" name="back" value="{{ back }}">
+    <label class="block">
+      <span class="block text-[11px] font-medium text-ink-soft mb-1">What you did <span class="text-ink-faint font-normal">— optional, for your own record</span></span>
+      <input name="note" placeholder="e.g. commented on their hiring post"
+             class="w-full h-9 px-3 rounded-lg bg-[#F7F7F9] border border-[#EAEBEF] text-[12.5px] outline-none focus:bg-white focus:border-violet2-200">
+    </label>
+    <button class="mt-2 w-full h-10 rounded-lg bg-brand-700 text-white text-[13px] font-semibold hover:bg-brand-600 shadow-sm">
+      Mark this step done
+    </button>
+  </form>
+  <p class="text-[11px] text-ink-faint mt-1.5 text-center">Finishing this schedules the next step automatically.</p>
+</div>
+
+<div class="mt-3 pt-3 border-t border-[#F2F2F5]">
+  <p class="text-[11px] font-medium text-ink-soft mb-2">Can’t do it today?</p>
+
+  <form method="post" action="/outreach/{{ step.id }}/reschedule" class="flex items-end gap-2">
+    <input type="hidden" name="back" value="{{ back }}">
+    <label class="flex-1 min-w-0">
+      <span class="block text-[11px] text-ink-faint mb-1">Move it to another day</span>
+      <input type="date" name="due" value="{{ step.due_date }}"
+             class="w-full h-9 px-2.5 rounded-lg bg-white border border-[#EAEBEF] text-[12.5px] text-ink-soft outline-none focus:border-violet2-200">
+    </label>
+    <button class="h-9 px-3.5 rounded-lg border border-[#EAEBEF] text-[12.5px] font-medium text-ink-soft hover:bg-[#FAFAFB] shrink-0">Move</button>
+  </form>
+
+  <form method="post" action="/outreach/{{ step.id }}/skip" class="flex items-end gap-2 mt-2.5">
+    <input type="hidden" name="back" value="{{ back }}">
+    <label class="flex-1 min-w-0">
+      <span class="block text-[11px] text-ink-faint mb-1">Skip it and move to the next step</span>
+      <input name="reason" placeholder="Why — optional"
+             class="w-full h-9 px-3 rounded-lg bg-white border border-[#EAEBEF] text-[12.5px] outline-none focus:border-violet2-200">
+    </label>
+    <button class="h-9 px-3.5 rounded-lg border border-[#EAEBEF] text-[12.5px] font-medium text-ink-faint hover:text-rose-600 hover:bg-[#FAFAFB] shrink-0">Skip</button>
+  </form>
+</div>
+
+{% else %}
+
+<div class="flex items-end gap-x-2 gap-y-1.5 flex-wrap mt-2.5">
+  <form method="post" action="/outreach/{{ step.id }}/done" class="flex items-end gap-1.5">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input name="note" placeholder="Note" aria-label="What you did (optional)"
+           class="h-8 px-2.5 w-[124px] rounded-lg bg-[#F4F4F6] border border-[#EAEBEF] text-[12px] outline-none focus:bg-white focus:border-violet2-200">
+    <button class="h-8 px-3.5 rounded-lg bg-brand-700 text-white text-[12.5px] font-semibold hover:bg-brand-600 shadow-sm">Done</button>
+  </form>
+
+  <span class="text-[11px] text-ink-faint/60 px-0.5 pb-2">or</span>
+
+  <form method="post" action="/outreach/{{ step.id }}/reschedule" class="flex items-end gap-1.5">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input type="date" name="due" value="{{ step.due_date }}" aria-label="New due date"
+           class="h-8 px-2 rounded-lg bg-white border border-[#EAEBEF] text-[11.5px] text-ink-soft outline-none focus:border-violet2-200">
+    <button class="h-8 px-2.5 rounded-lg border border-[#EAEBEF] text-[11.5px] text-ink-faint hover:text-ink-soft hover:bg-[#FAFAFB]">Move</button>
+  </form>
+
+  <form method="post" action="/outreach/{{ step.id }}/skip" class="flex items-end gap-1.5">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input name="reason" placeholder="Reason" aria-label="Why skip this step"
+           class="h-8 px-2.5 w-[96px] rounded-lg bg-white border border-[#EAEBEF] text-[11.5px] outline-none focus:border-violet2-200">
+    <button class="h-8 px-2.5 rounded-lg border border-[#EAEBEF] text-[11.5px] text-ink-faint hover:text-rose-600 hover:bg-[#FAFAFB]">Skip</button>
+  </form>
+</div>
+
+{% endif %}
+{% endmacro %}
+
+
 {# One actionable task. Used on the Outreach board and on a person's page, so
    the two can never disagree about what a step offers. `back` is where the
    forms return to; main._safe_back rejects anything that leaves the app. #}
@@ -1168,72 +1280,140 @@
       {% endif %}
     </div>
 
-    {# For a comment step, the drafted comment for their newest post with one.
-       The task is "comment on their post"; without the draft the person still
-       has to go and write it, which is the work this is meant to remove. #}
-    {# Only where the LinkedIn panel isn't already showing it. On a contact's own
-       page it is, one section up, so rendering it again put the same text on
-       screen twice. See outreach_panel's call. #}
+    {# The drafted comment, but only where the LinkedIn panel isn't already
+       showing it: on a contact's own page it is, one section up. See
+       outreach_panel's call. #}
     {% if show_draft and step.step_key in ('comment_1', 'comment_2') %}
-      {% set drafted = step.person.activities|selectattr('suggested_comment')|list %}
-      {% if drafted %}
-      {% set pick = drafted[0] if step.step_key == 'comment_1' else (drafted[1] if drafted|length > 1 else drafted[0]) %}
-      <div class="mt-2 rounded-xl border border-violet2-100 bg-violet2-50/50 p-2.5" data-copy-block>
-        <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
-          <span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-600">Recommended comment</span>
-          {% if pick.url %}<a href="{{ pick.url }}" target="_blank" rel="noopener" class="text-[10px] text-[#0A66C2] hover:underline">on their {{ pick.type_label|lower }}{% if pick.activity_date %} of {{ pick.activity_date|short_date }}{% endif %}</a>{% endif %}
-          <span class="text-[10px] text-ink-faint">· edit before sending</span>
-          {{ copy_button() }}
-        </div>
-        <textarea rows="2" class="w-full resize-y rounded-lg bg-white border border-violet2-100 px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-violet2-200">{{ pick.suggested_comment }}</textarea>
-      </div>
-      {% else %}
-      <p class="text-[11.5px] text-ink-faint mt-2">No comment drafted yet — open
-        <a href="/person/{{ step.person.slug }}#linkedin" class="text-violet2-600 hover:underline">their LinkedIn panel</a>
-        and use “Draft comments”.</p>
-      {% endif %}
+    <div class="mt-2">{{ outreach_comment_draft(step) }}</div>
     {% endif %}
 
     {% if step.blocked_reason %}
     <p class="text-[12px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2">{{ step.blocked_reason }}</p>
     {% endif %}
 
-    {# All three actions stay visible and in place; only their weight changes.
-       Done is the one almost every row wants, so it reads as the button and the
-       other two as the alternatives beside it — previously all three competed
-       at the same weight behind three same-looking text boxes, and the reader
-       had to find the primary one each time.
-
-       The note and reason fields are kept deliberately, though nothing has ever
-       been typed into either. They are narrower and their placeholders are one
-       word, so they take a share of the row proportional to how often they are
-       used. #}
-    <div class="flex items-end gap-x-2 gap-y-1.5 flex-wrap mt-2.5">
-      <form method="post" action="/outreach/{{ step.id }}/done" class="flex items-end gap-1.5">
-        <input type="hidden" name="back" value="{{ back }}">
-        <input name="note" placeholder="Note" aria-label="What you did (optional)"
-               class="h-8 px-2.5 w-[124px] rounded-lg bg-[#F4F4F6] border border-[#EAEBEF] text-[12px] outline-none focus:bg-white focus:border-violet2-200">
-        <button class="h-8 px-3.5 rounded-lg bg-brand-700 text-white text-[12.5px] font-semibold hover:bg-brand-600 shadow-sm">Done</button>
-      </form>
-
-      <span class="text-[11px] text-ink-faint/60 px-0.5 pb-2">or</span>
-
-      <form method="post" action="/outreach/{{ step.id }}/reschedule" class="flex items-end gap-1.5">
-        <input type="hidden" name="back" value="{{ back }}">
-        <input type="date" name="due" value="{{ step.due_date }}" aria-label="New due date"
-               class="h-8 px-2 rounded-lg bg-white border border-[#EAEBEF] text-[11.5px] text-ink-soft outline-none focus:border-violet2-200">
-        <button class="h-8 px-2.5 rounded-lg border border-[#EAEBEF] text-[11.5px] text-ink-faint hover:text-ink-soft hover:bg-[#FAFAFB]">Move</button>
-      </form>
-
-      <form method="post" action="/outreach/{{ step.id }}/skip" class="flex items-end gap-1.5">
-        <input type="hidden" name="back" value="{{ back }}">
-        <input name="reason" placeholder="Reason" aria-label="Why skip this step"
-               class="h-8 px-2.5 w-[96px] rounded-lg bg-white border border-[#EAEBEF] text-[11.5px] outline-none focus:border-violet2-200">
-        <button class="h-8 px-2.5 rounded-lg border border-[#EAEBEF] text-[11.5px] text-ink-faint hover:text-rose-600 hover:bg-[#FAFAFB]">Skip</button>
-      </form>
-    </div>
+    {{ outreach_actions(step, back) }}
   </div>
 </li>
+{% endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   One contact's open task, as a dialog.
+
+   Opened by linking to #task-<slug>, closed by linking to an id nothing has —
+   the :target pseudo-class does the showing, so there is no JavaScript. That
+   buys more than purity: a form POST can redirect to
+   /outreach?view=active#task-<slug>, which makes "start the sequence and show
+   me the task" one request with no client state to restore, and the browser's
+   back button closes it.
+
+   It lays out its own body rather than reusing outreach_task_row. A list row is
+   wide and shallow and says as little as it can; a dialog is narrow and tall
+   and is the one place there is room to explain the task properly. Sharing the
+   row's layout here put its one-line action bar into a 640px column, where the
+   primary button overlapped the separator and the date field.
+
+   What is shared is behaviour, not arrangement: outreach_actions and
+   outreach_comment_draft are the same macros the row uses, asked for in their
+   stacked form.
+--------------------------------------------------------------------------- #}
+{% macro task_modal(person, step, back='/outreach?view=active') %}
+<div id="task-{{ person.slug }}" class="task-modal" role="dialog" aria-modal="true"
+     aria-label="Task for {{ person.full_name }}">
+  {# A link, so clicking the backdrop closes it. #}
+  <a href="#closed" class="task-modal-scrim" aria-label="Close"></a>
+
+  <div class="task-modal-card card shadow-card">
+
+    {# ---- who ---- #}
+    <div class="flex items-start justify-between gap-3 px-5 pt-4 pb-3.5 border-b border-[#F2F2F5]">
+      <div class="min-w-0">
+        <a href="/person/{{ person.slug }}#outreach"
+           class="text-[16px] font-bold leading-tight hover:text-brand-600 hover:underline">{{ person.full_name }}</a>
+        <p class="text-[12px] text-ink-faint mt-0.5 truncate">
+          {{ person.title or 'Designation unknown' }}{% if person.company %} · {{ person.company.name }}{% endif %}
+        </p>
+      </div>
+      <a href="#closed" class="grid place-items-center w-8 h-8 rounded-lg text-ink-faint hover:bg-[#F4F4F6] hover:text-ink-soft shrink-0"
+         aria-label="Close">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </a>
+    </div>
+
+    <div class="px-5 py-4">
+      {% if step %}
+
+      {# ---- what, and when. The timing is stated once, here: the badge and
+             the due phrase used to sit next to each other saying "TODAY" and
+             "due today". ---- #}
+      <div class="rounded-xl border {% if step.state == 'overdue' %}border-rose-100 bg-rose-50/40{% elif step.state == 'due' %}border-brand-200 bg-brand-50/40{% else %}border-[#EFEFF2] bg-[#FBFBFC]{% endif %} p-3.5">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <span class="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            Step {{ person.outreach_closed_count + 1 }} of {{ person.outreach_total }}
+          </span>
+          <span class="text-[11.5px] font-semibold
+            {% if step.state == 'overdue' %}text-rose-700{% elif step.state == 'due' %}text-brand-700{% else %}text-ink-faint{% endif %}">
+            {{ outreach_due_phrase(step) }}
+          </span>
+        </div>
+
+        <p class="text-[16px] font-bold leading-snug mt-1.5">{{ step.label }}</p>
+
+        {# The hint is a paragraph here rather than the row's tooltip. It is the
+           only explanation of what the task actually involves, and a dialog is
+           where someone has stopped to read. #}
+        {% if step.hint %}
+        <p class="text-[12.5px] text-ink-soft leading-relaxed mt-1.5">{{ step.hint }}</p>
+        {% endif %}
+
+        {# Where to go and do it. #}
+        <div class="mt-2.5">
+          {% if step.step_key == 'email' and person.email %}
+          <a href="mailto:{{ person.email }}"
+             class="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-violet2-600 hover:underline">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            Email {{ person.email }}
+          </a>
+          {% elif step.step_key != 'email' and person.linkedin_url %}
+          <a href="{{ person.linkedin_url }}" target="_blank" rel="noopener"
+             class="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[#0A66C2] hover:underline">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+            Open their LinkedIn
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if step.blocked_reason %}
+      <p class="text-[12px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-3">{{ step.blocked_reason }}</p>
+      {% endif %}
+
+      {# ---- what to say ---- #}
+      {% if step.step_key in ('comment_1', 'comment_2') %}
+      <div class="mt-3">{{ outreach_comment_draft(step, rows=3) }}</div>
+      {% endif %}
+
+      {# ---- what to do about it ---- #}
+      <div class="mt-4">{{ outreach_actions(step, back ~ '#task-' ~ person.slug, stacked=True) }}</div>
+
+      {% else %}
+      <p class="text-[13px] text-ink-faint">Every step is closed for this contact.</p>
+      {% endif %}
+    </div>
+
+    {# Rejecting from here, because this is where someone reads the task and
+       decides it is not worth doing. Returns to the list rather than reopening
+       a dialog for a contact that has just left it. #}
+    <div class="flex items-center justify-between gap-3 px-5 py-3 border-t border-[#F2F2F5] bg-[#FBFBFC] rounded-b-2xl">
+      <form method="post" action="/person/{{ person.slug }}/outreach/reject">
+        <input type="hidden" name="back" value="{{ back }}">
+        <button class="text-[11.5px] text-ink-faint hover:text-rose-600"
+                title="Decide against approaching them. Reversible — they move to the Rejected sheet.">Don’t contact this person</button>
+      </form>
+      <a href="#closed" class="text-[12px] font-medium text-ink-soft hover:text-ink px-2 py-1">Close</a>
+    </div>
+  </div>
+</div>
 {% endmacro %}
 
 

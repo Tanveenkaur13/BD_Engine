@@ -266,6 +266,18 @@ class Person(Base):
     # nothing about whether this contact has been researched, and writing both
     # into one field made each overwrite the other.
     draft_note = Column(String)
+
+    # --- deliberately not approaching this contact.
+    #
+    # Distinct from a finished sequence and from a skipped step: those record
+    # work done, this records a decision not to do it. Kept on the person
+    # rather than as a step, because it is true of them whatever stage they had
+    # reached, and it has to survive a re-import — a rejected contact appearing
+    # back in New after someone re-uploads the export is the whole point of
+    # storing it. Reversible; see outreach.restore.
+    outreach_rejected_at = Column(DateTime, index=True)
+    outreach_reject_reason = Column(String)
+
     imported_at = Column(DateTime, default=utcnow)
 
     # --- designation is one of the three pillars, and the CSV's copy of it
@@ -348,8 +360,19 @@ class Person(Base):
         return None
 
     @property
+    def outreach_rejected(self):
+        return self.outreach_rejected_at is not None
+
+    @property
     def outreach_stage(self):
-        from app.outreach import STAGE_NEW, STAGE_IN_PROGRESS, STAGE_DONE
+        from app.outreach import (
+            STAGE_NEW, STAGE_IN_PROGRESS, STAGE_DONE, STAGE_REJECTED,
+        )
+        # Rejection wins over everything else. A contact turned down halfway
+        # through is rejected, not in progress, or their open step keeps
+        # arriving in today's list.
+        if self.outreach_rejected:
+            return STAGE_REJECTED
         if not self.outreach_steps:
             return STAGE_NEW
         return STAGE_IN_PROGRESS if self.outreach_open else STAGE_DONE

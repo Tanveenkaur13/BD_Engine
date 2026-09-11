@@ -2,6 +2,53 @@
 {% import "_partials.html" as ui %}
 {% block title %}Outreach — PeopleIntel{% endblock %}
 
+{% block head %}
+<style>
+  /* The task dialog. Shown by :target, so opening it is a link and closing it
+     is a link to an id nothing has — which means a redirect can open it
+     (/outreach?view=active#task-<slug>) and the back button closes it, with no
+     script and no state to restore.
+
+     Plain CSS because the prebuilt Tailwind sheet carries no :target variant
+     and this project has no Node build to add one — the same reason .subnav in
+     base.html is written out by hand. */
+  .task-modal{display:none}
+  .task-modal:target{
+    display:flex;
+    position:fixed;
+    top:0;left:0;right:0;bottom:0;
+    z-index:60;
+    /* Centred both ways. `center` alone would clip a dialog taller than the
+       viewport, because a centred flex item cannot scroll past the top edge —
+       `safe center` falls back to flex-start when it would overflow, and the
+       margin:auto below does the same for browsers that ignore it. */
+    align-items:safe center;
+    justify-content:center;
+    padding:1.5rem 1rem;
+    overflow-y:auto;
+  }
+  .task-modal-scrim{
+    position:fixed;
+    top:0;left:0;right:0;bottom:0;
+    background:rgba(24,24,32,.5);
+  }
+  .task-modal-card{
+    position:relative;         /* above the scrim */
+    width:100%;
+    max-width:540px;
+    margin:auto;               /* centres, and still scrolls when too tall */
+    background:#fff;
+    border-radius:16px;
+    box-shadow:0 24px 48px -12px rgba(24,24,32,.28);
+  }
+  /* Nothing behind the dialog should scroll under it on a phone. */
+  @media (max-width:480px){
+    .task-modal:target{padding:0}
+    .task-modal-card{max-width:none;border-radius:0;min-height:100%}
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="max-w-[1180px] mx-auto space-y-4">
 
@@ -53,6 +100,7 @@
     ('new',    'New',              new_people|length),
     ('active', 'In progress',      active|length),
     ('done',   'Complete',         done|length),
+    ('rejected', 'Rejected',       rejected|length),
   ] %}
   {# Switching sheets must not silently drop the segment you are working in. #}
   {% set seg = '&country=' ~ (country|urlencode) ~ '&category=' ~ (category|urlencode) %}
@@ -118,10 +166,20 @@
           <a href="/person/{{ p.slug }}" class="text-[13.5px] font-medium hover:text-brand-600 hover:underline">{{ p.full_name }}</a>
           <p class="text-[12px] text-ink-faint truncate">{{ p.title or 'Designation unknown' }}{% if p.company %} · {{ p.company.name }}{% endif %}</p>
         </div>
-        <form method="post" action="/person/{{ p.slug }}/outreach/start" class="shrink-0">
-          <input type="hidden" name="back" value="/outreach?view=active{{ seg }}">
-          <button class="text-[12px] font-medium px-3 py-1.5 rounded-lg bg-brand-700 text-white hover:bg-brand-600">Start sequence</button>
-        </form>
+        <div class="flex items-center gap-1.5 shrink-0">
+          {# The redirect carries #task-<slug>, so starting the sequence lands
+             on the In progress sheet with this contact's first task already
+             open in the dialog. The move between sheets happens behind it. #}
+          <form method="post" action="/person/{{ p.slug }}/outreach/start">
+            <input type="hidden" name="back" value="/outreach?view=active{{ seg }}#task-{{ p.slug }}">
+            <button class="text-[12px] font-medium px-3 py-1.5 rounded-lg bg-brand-700 text-white hover:bg-brand-600">Start sequence</button>
+          </form>
+          <form method="post" action="/person/{{ p.slug }}/outreach/reject">
+            <input type="hidden" name="back" value="/outreach?view=new{{ seg }}">
+            <button class="text-[12px] font-medium px-2.5 py-1.5 rounded-lg border border-[#EAEBEF] text-ink-faint hover:text-rose-600 hover:bg-[#FAFAFB]"
+                    title="Decide against approaching them. Reversible — they move to the Rejected sheet.">Reject</button>
+          </form>
+        </div>
       </li>
       {% endfor %}
     </ul>
@@ -141,21 +199,47 @@
         <svg class="w-[19px] h-[19px] text-violet2-600 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></svg>
         <div class="min-w-0">
           <h3 class="text-[15px] font-bold leading-tight">In progress — already approached</h3>
-          <p class="text-[11.5px] text-ink-faint mt-0.5">Soonest due first.</p>
+          <p class="text-[11.5px] text-ink-faint mt-0.5">Soonest due first. Click a name for its task.</p>
         </div>
       </div>
       <span class="text-[11px] font-medium text-violet2-600 bg-violet2-50 border border-violet2-100 rounded-full px-2.5 py-1 shrink-0">{{ active|length }}</span>
     </div>
 
+    {# A name per line with enough state to scan, and the task itself in a
+       dialog behind the name. Every contact's full task row used to render
+       inline here — five contacts meant five sets of three forms on one page,
+       and finding the one you meant to act on was the work. #}
     {% if active %}
-    <ol class="space-y-2.5">
+    <ul class="space-y-1">
       {% for p in active %}
       {% set step = p.outreach_open %}
       {% if step %}
-      {{ ui.outreach_task_row(step, back='/outreach?view=active' ~ seg) }}
+      <li>
+        <a href="#task-{{ p.slug }}"
+           class="flex items-center gap-3 px-2 py-2 -mx-2 rounded-lg hover:bg-[#FAFAFB] group">
+          <span class="grid place-items-center w-7 h-7 rounded-lg shrink-0
+            {% if step.state == 'overdue' %}bg-rose-50 text-rose-700{% elif step.state == 'due' %}bg-brand-50 text-brand-700{% else %}bg-[#F4F4F6] text-ink-faint{% endif %}">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-[13.5px] font-medium group-hover:text-brand-600">{{ p.full_name }}</span>
+            <span class="block text-[12px] text-ink-faint truncate">{{ step.label }} · {{ ui.outreach_due_phrase(step) }}{% if p.company %} · {{ p.company.name }}{% endif %}</span>
+          </span>
+          {{ ui.outreach_state_badge(step) }}
+          <svg class="w-4 h-4 text-ink-faint/50 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+      </li>
       {% endif %}
       {% endfor %}
-    </ol>
+    </ul>
+
+    {# One dialog per contact on this sheet. Inert until its id is the target,
+       which is also how the start-sequence redirect opens one. #}
+    {% for p in active %}
+    {% if p.outreach_open %}
+    {{ ui.task_modal(p, p.outreach_open, back='/outreach?view=active' ~ seg) }}
+    {% endif %}
+    {% endfor %}
     {% else %}
     <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
       <p class="text-[13px] font-medium">Nobody is mid-sequence</p>
@@ -196,6 +280,54 @@
     </ul>
     {% else %}
     <p class="text-[13px] text-ink-faint italic">No sequence has run to the end yet.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {# ---------------------------------------------------------- rejected #}
+  {% if view == 'rejected' %}
+  <section class="card shadow-card p-5">
+    <div class="flex items-start justify-between gap-3 mb-3.5">
+      <div class="flex items-start gap-2.5">
+        <svg class="w-[19px] h-[19px] text-ink-faint mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+        <div class="min-w-0">
+          <h3 class="text-[15px] font-bold leading-tight">Rejected — decided against</h3>
+          <p class="text-[11.5px] text-ink-faint mt-0.5">Not being approached. Restoring puts them back where they were.</p>
+        </div>
+      </div>
+      <span class="text-[11px] font-medium text-ink-faint bg-[#F4F4F6] border border-[#EAEBEF] rounded-full px-2.5 py-1 shrink-0">{{ rejected|length }}</span>
+    </div>
+
+    {% if rejected %}
+    <ul class="space-y-2">
+      {% for p in rejected %}
+      <li class="flex items-center gap-3 pb-2 border-b border-[#F2F2F5] last:border-0 last:pb-0">
+        <div class="min-w-0 flex-1">
+          <a href="/person/{{ p.slug }}" class="text-[13.5px] font-medium hover:text-brand-600 hover:underline">{{ p.full_name }}</a>
+          <p class="text-[12px] text-ink-faint truncate">{{ p.title or 'Designation unknown' }}{% if p.company %} · {{ p.company.name }}{% endif %}</p>
+          <p class="text-[11px] text-ink-faint/80 mt-0.5">
+            Rejected {{ p.outreach_rejected_at|relative_time }}
+            {%- if p.outreach_reject_reason %} · {{ p.outreach_reject_reason }}{% endif %}
+            {%- if p.outreach_steps %} · was {{ p.outreach_closed_count }}/{{ p.outreach_total }} through the sequence{% endif %}
+          </p>
+        </div>
+        <form method="post" action="/person/{{ p.slug }}/outreach/restore" class="shrink-0">
+          <input type="hidden" name="back" value="/outreach?view=rejected{{ seg }}">
+          <button class="text-[12px] font-medium px-3 py-1.5 rounded-lg border border-[#EAEBEF] text-ink-soft hover:bg-[#FAFAFB]"
+                  title="Put them back on the sheet they were on before.">Restore</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="text-[11px] text-ink-faint mt-3">A rejection is stored on the contact, so re-uploading the export will
+      not put them back into New.</p>
+    {% else %}
+    <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
+      <p class="text-[13px] font-medium">Nobody has been rejected</p>
+      <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Reject a contact from
+        <a href="/outreach?view=new{{ seg }}" class="text-violet2-600 hover:underline">New</a>, or from their task
+        dialog, and they appear here.</p>
+    </div>
     {% endif %}
   </section>
   {% endif %}
