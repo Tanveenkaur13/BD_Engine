@@ -117,8 +117,30 @@ document.addEventListener('click', function (e) {
   var btn = e.target.closest('[data-copy]');
   if (!btn) return;
   var block = btn.closest('[data-copy-block]');
-  var field = block && block.querySelector('textarea');
-  if (!field) return;
+  if (!block) return;
+
+  // A message can be more than one field. An email is a subject and a body,
+  // and "copy" has to mean both or it is not the message. Fields opted in with
+  // data-copy-part are joined in DOM order; data-copy-prefix labels one, so a
+  // pasted email carries "Subject: ..." above its body rather than two
+  // paragraphs the reader has to tell apart. A block with no marked parts
+  // falls back to its single textarea, which is what a comment draft is.
+  var parts = block.querySelectorAll('[data-copy-part]');
+  var field = block.querySelector('textarea');
+  var text;
+  if (parts.length) {
+    var chunks = [];
+    Array.prototype.forEach.call(parts, function (el) {
+      var v = (el.value || '').trim();
+      if (!v) return;
+      chunks.push((el.getAttribute('data-copy-prefix') || '') + v);
+    });
+    text = chunks.join('\n\n');
+  } else {
+    if (!field) return;
+    text = field.value;
+  }
+  if (!text) return;
 
   var label = btn.querySelector('[data-copy-label]');
   var original = label ? label.textContent : '';
@@ -132,10 +154,25 @@ document.addEventListener('click', function (e) {
   // user can see what was taken. field.value, not the stored draft: the box
   // is editable on purpose, so an edit made here is what should be copied.
   function selectAndExec() {
-    field.focus();
-    field.select();
+    // Multi-field text cannot be selected in place, so it goes through a
+    // throwaway textarea. A single field selects itself, which also leaves the
+    // text visibly selected for a manual Ctrl+C when even this is refused.
     var ok = false;
-    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    if (parts.length > 1 || !field) {
+      var tmp = document.createElement('textarea');
+      tmp.value = text;
+      tmp.setAttribute('readonly', '');
+      tmp.style.position = 'fixed';
+      tmp.style.opacity = '0';
+      document.body.appendChild(tmp);
+      tmp.select();
+      try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+      document.body.removeChild(tmp);
+    } else {
+      field.focus();
+      field.select();
+      try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    }
     say(ok ? 'Copied' : 'Press Ctrl+C');
   }
 
@@ -143,7 +180,7 @@ document.addEventListener('click', function (e) {
   // there; served over plain http from a LAN address it is not, hence the
   // fallback rather than a button that silently does nothing.
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(field.value).then(
+    navigator.clipboard.writeText(text).then(
       function () { say('Copied'); },
       function () { selectAndExec(); }
     );

@@ -360,6 +360,17 @@ class Person(Base):
         return None
 
     @property
+    def template_email(self):
+        """The approved outreach email for this contact, or why it cannot be.
+
+        Composed, not generated — see app/email_template.py. Derived on read
+        like every other status here, so research landing later changes the
+        answer without anything needing to be regenerated.
+        """
+        from app.email_template import compose
+        return compose(self)
+
+    @property
     def outreach_rejected(self):
         return self.outreach_rejected_at is not None
 
@@ -557,6 +568,46 @@ class Person(Base):
     @property
     def is_researched(self):
         return bool(self.findings or self.activities)
+
+    @property
+    def outreach_prep(self):
+        """What starting a sequence would actually have to work with.
+
+        The New sheet asks this before anyone presses Start. `is_researched`
+        is an OR over findings and activities, so a contact can show
+        "Researched" on company findings alone — while the sequence opens on
+        two comment steps that need a post of their own. The badge on its own
+        therefore cannot be planned from, and someone only discovers the gap
+        after the contact has already moved to In progress.
+
+        Only posts and reposts count. A comment they left on someone else's
+        post, or a mention of them, is a finding about them rather than
+        something of theirs to comment on.
+
+        Returns (state, note): state picks the colour, note is the phrase for
+        the row, or None where the badge already says everything.
+        """
+        if self.research_status == RESEARCH_RUNNING:
+            return "running", None
+        if self.research_status == RESEARCH_FAILED:
+            return "failed", "research failed — retry on their page"
+        if not self.is_researched:
+            return "none", "nothing found to comment on yet"
+        posts = sum(1 for a in self.activities
+                    if a.activity_type == ACTIVITY_POST)
+        reposts = sum(1 for a in self.activities
+                      if a.activity_type == ACTIVITY_REPOST)
+        if not (posts or reposts):
+            return "thin", "nothing of theirs to comment on — both comment steps open empty"
+        # Counted apart, because ACTIVITY_REPOST's own note in this file is
+        # that a repost is not a post of theirs and merging the two overstates
+        # what they actually wrote. Both can be commented on, so both appear.
+        parts = []
+        if posts:
+            parts.append("%d post%s" % (posts, "" if posts == 1 else "s"))
+        if reposts:
+            parts.append("%d repost%s" % (reposts, "" if reposts == 1 else "s"))
+        return "ready", "%s to comment on" % ", ".join(parts)
 
     @property
     def can_research(self):

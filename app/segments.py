@@ -160,11 +160,22 @@ def matches(person, country="", category=""):
     return True
 
 
-def country_options(people):
-    """[(country, count)] over the whole list, most common first then A-Z.
+# Both option builders take the list already narrowed by the OTHER filters and
+# never by their own. That is what makes the numbers mean something: with
+# Germany chosen, "Education (18)" was the count across the whole list, not the
+# count in Germany, so the dropdown contradicted the page under it.
+#
+# Never by their own filter, because a select whose options are computed from
+# its own value collapses to one row the moment you use it and cannot be undone.
+# `keep` covers the remaining case: the value currently chosen stays on the list
+# even when the other filters leave it at zero, so the control always shows what
+# it is set to.
 
-    Counted before filtering, so the dropdown does not shrink as you use it -
-    a select whose own options vanish when chosen is impossible to undo.
+
+def country_options(people, keep=""):
+    """[(country, count)] over `people`, most common first then A-Z.
+
+    `people` should already be narrowed by every filter except country.
     """
     counts, display = {}, {}
     for person in people:
@@ -172,17 +183,26 @@ def country_options(people):
             key = country.lower()
             counts[key] = counts.get(key, 0) + 1
             display.setdefault(key, country)
+    kept = (keep or "").strip()
+    if kept and kept.lower() not in counts:
+        counts[kept.lower()] = 0
+        display[kept.lower()] = kept
     return sorted(((display[k], n) for k, n in counts.items()),
                   key=lambda row: (-row[1], row[0].lower()))
 
 
-def category_options(people):
-    """[(key, label, count)] in CATEGORIES order, skipping empty buckets."""
+def category_options(people, keep=""):
+    """[(key, label, count)] in CATEGORIES order, skipping empty buckets.
+
+    `people` should already be narrowed by every filter except category.
+    """
     counts = {}
     for person in people:
         key = category_of(person)[0]
         counts[key] = counts.get(key, 0) + 1
-    return [(key, LABELS[key], counts[key]) for key in ORDER if counts.get(key)]
+    kept = (keep or "").strip().lower()
+    return [(key, LABELS[key], counts.get(key, 0)) for key in ORDER
+            if counts.get(key) or key == kept]
 
 
 def summarise(people):

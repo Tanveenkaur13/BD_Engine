@@ -130,7 +130,7 @@
     {% if due_here %}
     <ol class="space-y-2.5">
       {% for step in due_here %}
-      {{ ui.outreach_task_row(step, back='/outreach?view=today' ~ seg) }}
+      {{ ui.outreach_task_row(step, back='/outreach?view=today' ~ seg, prefs=mail_prefs) }}
       {% endfor %}
     </ol>
     {% else %}
@@ -162,8 +162,19 @@
     <ul class="space-y-2">
       {% for p in new_people %}
       <li class="flex items-center gap-3 pb-2 border-b border-[#F2F2F5] last:border-0 last:pb-0">
+        {# Research state before Start, not after. The badge answers "has anyone
+           looked at them", the note answers "will the first task have anything
+           in it" — and those two can disagree, because is_researched is an OR
+           over company findings and their own posts. See Person.outreach_prep. #}
+        {% set prep, prep_note = p.outreach_prep %}
         <div class="min-w-0 flex-1">
-          <a href="/person/{{ p.slug }}" class="text-[13.5px] font-medium hover:text-brand-600 hover:underline">{{ p.full_name }}</a>
+          <div class="flex items-baseline gap-2 flex-wrap">
+            <a href="/person/{{ p.slug }}" class="text-[13.5px] font-medium hover:text-brand-600 hover:underline">{{ p.full_name }}</a>
+            {{ ui.research_badge(p.research_status, p.research_label) }}
+            {% if prep_note %}
+            <span class="text-[11px] {{ 'text-amber-700' if prep in ('none', 'thin', 'failed') else 'text-ink-faint' }}">{{ prep_note }}</span>
+            {% endif %}
+          </div>
           <p class="text-[12px] text-ink-faint truncate">{{ p.title or 'Designation unknown' }}{% if p.company %} · {{ p.company.name }}{% endif %}</p>
         </div>
         <div class="flex items-center gap-1.5 shrink-0">
@@ -237,7 +248,7 @@
        which is also how the start-sequence redirect opens one. #}
     {% for p in active %}
     {% if p.outreach_open %}
-    {{ ui.task_modal(p, p.outreach_open, back='/outreach?view=active' ~ seg) }}
+    {{ ui.task_modal(p, p.outreach_open, back='/outreach?view=active' ~ seg, prefs=mail_prefs) }}
     {% endif %}
     {% endfor %}
     {% else %}

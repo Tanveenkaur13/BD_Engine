@@ -229,6 +229,18 @@
           <h2 class="text-[21px] font-bold tracking-tight">{{ person.full_name }}</h2>
           {{ status_badge(person.enrichment_status, person.status_label) }}
           {{ research_badge(person.research_status, person.research_label) }}
+          {# Rejection belongs in the status row: it is the one fact that
+             changes what every other badge here is worth knowing for. The
+             action and the reason live in the outreach section, which this
+             links to rather than repeating. #}
+          {% if person.outreach_rejected %}
+          <a href="#outreach"
+             class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
+             title="Decided against on {{ person.outreach_rejected_at|short_date }}{% if person.outreach_reject_reason %} — {{ person.outreach_reject_reason }}{% endif %}. Restore in the outreach section.">
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+            Not contacting
+          </a>
+          {% endif %}
           {{ research_button(person, small=False) }}
         </div>
 
@@ -1156,6 +1168,166 @@
 
 
 {# ---------------------------------------------------------------------------
+   The outreach email, assembled from the approved skeleton.
+
+   Composed rather than generated — see app/email_template.py. The fixed
+   brand blocks must be identical on every lead, and a model asked to write a
+   whole email paraphrases them a little each time until no two match. So the
+   only variable parts are the ones the record supplies, and the panel names
+   each of them with its source.
+
+   Tone and length ARE adjustable, but narrowly: tone moves the greeting, the
+   opener and the sign-off; length drops whole blocks from the end of the
+   skeleton rather than rewording anything. The brand blocks are never touched
+   by either. Subjects are the vertical's approved bank plus, when research
+   found a real event, one line grounded in that event -- ranked, best first.
+--------------------------------------------------------------------------- #}
+{% macro outreach_email_draft(step, back, prefs={}) %}
+{% set tone = prefs.get('tone') if prefs.get('tone') in TEMPLATE_TONES else DEFAULT_TEMPLATE_TONE %}
+{% set length = prefs.get('length') if prefs.get('length') in TEMPLATE_LENGTHS else DEFAULT_TEMPLATE_LENGTH %}
+{% set mail = compose_email(step.person, tone=tone, length=length) %}
+
+<div class="rounded-xl border {% if mail.missing %}border-amber-100 bg-amber-50/40{% else %}border-violet2-100 bg-violet2-50/40{% endif %} p-3">
+
+  <div class="flex items-center gap-2 flex-wrap mb-2">
+    <span class="text-[10px] font-semibold uppercase tracking-wide {% if mail.missing %}text-amber-700{% else %}text-violet2-600{% endif %}">Outreach email</span>
+    {% if not mail.missing %}
+    <span class="text-[10px] text-ink-faint">{{ mail.vertical_label }} · edit before sending</span>
+    {% endif %}
+  </div>
+
+  {# ---------------------------- the template cannot be filled truthfully #}
+  {% if mail.missing %}
+  <p class="text-[12.5px] font-medium text-amber-900">No email yet for {{ step.person.first_name or step.person.full_name }}</p>
+  <p class="text-[12px] text-amber-800 mt-1 leading-relaxed">The skeleton is fixed; what it merges in is not on file yet.</p>
+  <ul class="mt-2 space-y-0.5">
+    {% for gap in mail.missing %}
+    <li class="text-[12px] text-amber-800 flex gap-1.5"><span class="text-amber-400">·</span><span>{{ gap }}</span></li>
+    {% endfor %}
+  </ul>
+  <p class="text-[11.5px] text-amber-700 mt-2 pt-2 border-t border-amber-100">
+    The hook opens on whatever research found first — an announcement about the company, a post of
+    theirs, or what the company does. None of the three is on file yet:
+    <a href="/person/{{ step.person.slug }}" class="font-medium text-violet2-600 hover:underline">their page →</a>
+  </p>
+
+  {% else %}
+
+  {# --------------------------------------------------- tone and length ----
+     A GET form, because the email is composed on read: changing a control
+     reloads the page and the email is reassembled from the same record. There
+     is nothing to store and nothing to regenerate, so the two stay in step —
+     what the selects show is always what produced the text below them. #}
+  {# The action keeps the #fragment so the dialog survives Apply; the hidden
+     fields put back the query a GET submit would otherwise overwrite. #}
+  {% set submit = form_target(back) %}
+  <form method="get" action="{{ submit.action }}" class="flex items-end gap-2 flex-wrap mb-2.5 pb-2.5 border-b border-violet2-100">
+    {% for k, v in submit.keep.items() %}
+    <input type="hidden" name="{{ k }}" value="{{ v }}">
+    {% endfor %}
+
+    <label class="block">
+      <span class="block text-[10px] uppercase tracking-wide text-ink-faint mb-0.5">Tone</span>
+      <select name="tone" class="h-8 px-2 rounded-lg bg-white border border-[#E2E3E8] text-[12px] outline-none focus:border-violet2-300">
+        {% for key, spec in TEMPLATE_TONES.items() %}
+        <option value="{{ key }}" {% if key == tone %}selected{% endif %}>{{ spec.label }} — {{ spec.note }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="block">
+      <span class="block text-[10px] uppercase tracking-wide text-ink-faint mb-0.5">Length</span>
+      <select name="length" class="h-8 px-2 rounded-lg bg-white border border-[#E2E3E8] text-[12px] outline-none focus:border-violet2-300">
+        {% for key, spec in TEMPLATE_LENGTHS.items() %}
+        <option value="{{ key }}" {% if key == length %}selected{% endif %}>{{ spec.label }} — {{ spec.note }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <button class="h-8 px-3 rounded-lg bg-violet2-600 hover:bg-violet2-700 text-white text-[12px] font-medium">Apply</button>
+
+    {% if mail.suggested_tone != mail.tone %}
+    <span class="text-[11px] text-ink-faint pb-2" title="{{ mail.suggested_tone_why }}">
+      · {{ TEMPLATE_TONES[mail.suggested_tone].label }} suits this contact better
+    </span>
+    {% endif %}
+
+    {# What is actually in force, spelled out, so the controls and the text
+       below can never appear to disagree. #}
+    <span class="text-[11px] text-ink-faint pb-2">
+      showing <b class="font-semibold text-ink-soft">{{ mail.tone_label }}</b>,
+      <b class="font-semibold text-ink-soft">{{ mail.length_label }}</b>
+      — {{ mail.blocks|length }} of 5 blocks,
+      <b class="font-semibold {% if mail.band == 'the sweet spot' %}text-emerald-700{% elif mail.band == 'past the drop-off' %}text-rose-700{% elif mail.band == 'in the band' %}text-ink-soft{% else %}text-amber-700{% endif %}"
+         title="{{ mail.band_why }}">{{ mail.words }} words, {{ mail.band }}</b>
+    </span>
+  </form>
+
+  {# ------------------------------------------------------ the assembled email #}
+  <div class="rounded-lg bg-white border border-violet2-100 p-2.5" data-copy-block>
+
+    {# A div, not a label: the copy button sits on this row, and a button inside
+       a label is both invalid and harmful — the click forwards to the label's
+       control, so Copy would also pop the subject dropdown open. The select
+       carries its own name instead. #}
+    <div class="flex items-baseline gap-2 mb-2 pb-2 border-b border-[#F2F2F5]">
+      <span class="text-[10px] uppercase tracking-wide text-ink-faint shrink-0" id="subj-{{ step.id }}">Subject</span>
+      <select data-copy-part data-copy-prefix="Subject: " aria-labelledby="subj-{{ step.id }}"
+              class="flex-1 min-w-0 text-[12.5px] font-medium bg-transparent outline-none cursor-pointer">
+        {% for line in mail.subjects %}
+        <option value="{{ line }}">{{ line }}</option>
+        {% endfor %}
+      </select>
+      {{ copy_button() }}
+    </div>
+
+    {# Subject lines are cut at about forty characters on a phone, so the count
+       matters more than it looks. The bank is the template's; this only says
+       which of its lines survives a mobile inbox. #}
+    <div class="flex items-center gap-2 flex-wrap -mt-1 mb-2">
+      {% for line in mail.subjects %}
+      {% set note = mail.subject_notes[loop.index0] %}
+      {% set why = mail.subject_reasons[loop.index0] %}
+      <span class="text-[10px] {% if not note[2] %}text-rose-600{% elif note[0] > 40 %}text-amber-700{% else %}text-emerald-700{% endif %}"
+            title="{{ note[3] }}{% if why %} — {{ why|join(', ') }}{% endif %}">
+        {%- if loop.first %}<b class="font-semibold">best</b> · {% endif -%}
+        {{ note[0] }} chars{% if why %} · {{ why|length }} signal{{ 's' if why|length != 1 }}{% endif %}</span>
+      {% endfor %}
+      <span class="text-[10px] text-ink-faint/80">questions out-open statements; a named trigger beats a curiosity line</span>
+    </div>
+
+    <textarea data-copy-part rows="{{ 16 if mail.blocks|length > 3 else 10 }}"
+              class="w-full resize-y rounded-lg bg-[#FBFBFC] border border-[#EFEFF2] px-2.5 py-2 text-[12.5px] leading-relaxed outline-none focus:bg-white focus:border-violet2-200">{{ mail.body }}</textarea>
+
+    {# Which blocks are in, and which the chosen length left out. #}
+    <div class="flex items-center gap-1.5 flex-wrap mt-2">
+      {% set names = {'hook': 'Hook', 'solution': 'Solution', 'about': 'About us', 'portfolio': 'Portfolio', 'close': 'Close'} %}
+      {% for key, label in names.items() %}
+      <span class="text-[10px] font-medium rounded px-1.5 py-0.5 border
+        {% if key in mail.blocks %}bg-violet2-50 border-violet2-200 text-violet2-700{% else %}bg-[#F7F7F9] border-[#EAEBEF] text-ink-faint/70 line-through{% endif %}">{{ label }}</span>
+      {% endfor %}
+    </div>
+
+    <div class="mt-2 pt-2 border-t border-[#F2F2F5] space-y-0.5">
+      <p class="text-[10.5px] text-ink-faint">
+        Vertical <b class="font-semibold text-ink-soft">{{ mail.vertical_label }}</b>, from the company's category.
+      </p>
+      <p class="text-[10.5px] text-ink-faint">
+        Hook opens on <b class="font-semibold text-ink-soft">{{ mail.opener_label }}</b> —
+        “{{ mail.trigger }}”{% if mail.trigger_url %}
+        <a href="{{ mail.trigger_url }}" target="_blank" rel="noopener" class="text-violet2-600 hover:underline">{{ mail.trigger_url|domain }}</a>{% endif %}
+      </p>
+      <p class="text-[10.5px] text-ink-faint">
+        Tone moves the greeting, the opener and the sign-off. The blocks themselves are never reworded.
+      </p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+
+{# ---------------------------------------------------------------------------
    The three things you can do to a step: finish it, move it, or skip it.
 
    One definition of the actions, two layouts. A list row has a wide, shallow
@@ -1245,7 +1417,7 @@
 {# One actionable task. Used on the Outreach board and on a person's page, so
    the two can never disagree about what a step offers. `back` is where the
    forms return to; main._safe_back rejects anything that leaves the app. #}
-{% macro outreach_task_row(step, back='/outreach#today', show_person=True, show_draft=True) %}
+{% macro outreach_task_row(step, back='/outreach#today', show_person=True, show_draft=True, prefs={}) %}
 <li class="flex gap-3 group">
   <span class="grid place-items-center w-7 h-7 rounded-lg shrink-0 mt-0.5
     {% if step.state == 'overdue' %}bg-rose-50 text-rose-700{% elif step.state == 'due' %}bg-brand-50 text-brand-700{% else %}bg-[#F4F4F6] text-ink-faint{% endif %}">
@@ -1283,8 +1455,15 @@
     {# The drafted comment, but only where the LinkedIn panel isn't already
        showing it: on a contact's own page it is, one section up. See
        outreach_panel's call. #}
+    {# show_draft suppresses the COMMENT draft only. It exists because the
+       LinkedIn panel on a contact's page already shows that same text one
+       section up — which is not true of the email draft, whose only home is
+       here. Gating both on one flag hid the email entirely on the person
+       page. #}
     {% if show_draft and step.step_key in ('comment_1', 'comment_2') %}
     <div class="mt-2">{{ outreach_comment_draft(step) }}</div>
+    {% elif step.step_key == 'email' %}
+    <div class="mt-2">{{ outreach_email_draft(step, back, prefs) }}</div>
     {% endif %}
 
     {% if step.blocked_reason %}
@@ -1317,7 +1496,7 @@
    outreach_comment_draft are the same macros the row uses, asked for in their
    stacked form.
 --------------------------------------------------------------------------- #}
-{% macro task_modal(person, step, back='/outreach?view=active') %}
+{% macro task_modal(person, step, back='/outreach?view=active', prefs={}) %}
 <div id="task-{{ person.slug }}" class="task-modal" role="dialog" aria-modal="true"
      aria-label="Task for {{ person.full_name }}">
   {# A link, so clicking the backdrop closes it. #}
@@ -1391,6 +1570,8 @@
       {# ---- what to say ---- #}
       {% if step.step_key in ('comment_1', 'comment_2') %}
       <div class="mt-3">{{ outreach_comment_draft(step, rows=3) }}</div>
+      {% elif step.step_key == 'email' %}
+      <div class="mt-3">{{ outreach_email_draft(step, back ~ '#task-' ~ person.slug, prefs) }}</div>
       {% endif %}
 
       {# ---- what to do about it ---- #}
@@ -1418,7 +1599,7 @@
 
 
 {# The whole sequence for one contact, on their own page. #}
-{% macro outreach_panel(person) %}
+{% macro outreach_panel(person, prefs={}) %}
 {% set open_step = person.outreach_open %}
 <section id="outreach" class="card shadow-card p-5">
   <div class="flex items-start justify-between gap-3 mb-3.5">
@@ -1434,7 +1615,37 @@
         title="{{ person.outreach_done_count }} done, {{ person.outreach_skipped_count }} skipped">{{ person.outreach_closed_count }} / {{ person.outreach_total }}</span>
   </div>
 
-  {% if not person.outreach_steps %}
+  {# Rejection first, because it changes what every other state below means.
+     person.outreach_open still returns a parked step for a rejected contact —
+     the exclusion lives in outreach.open_steps, which is a query — so without
+     this branch the panel would offer "Start sequence" to someone we have
+     decided against, or present their parked task as today's work. #}
+  {% if person.outreach_rejected %}
+  <div class="rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-4">
+    <div class="flex items-start gap-2.5">
+      <svg class="w-[18px] h-[18px] text-amber-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+      <div class="min-w-0 flex-1">
+        <p class="text-[13.5px] font-semibold text-amber-900">Not being approached</p>
+        <p class="text-[12.5px] text-amber-800 mt-0.5">
+          Rejected {{ person.outreach_rejected_at|relative_time }}{% if person.outreach_rejected_at %} · {{ person.outreach_rejected_at|short_date }}{% endif %}
+          {%- if person.outreach_reject_reason %} · {{ person.outreach_reject_reason }}{% endif %}
+        </p>
+        {% if person.outreach_steps %}
+        <p class="text-[12px] text-amber-700 mt-1">They were {{ person.outreach_closed_count }} of
+          {{ person.outreach_total }} steps through the sequence. Nothing was closed — restoring puts them
+          back exactly where they were.</p>
+        {% else %}
+        <p class="text-[12px] text-amber-700 mt-1">The sequence was never started for them.</p>
+        {% endif %}
+        <form method="post" action="/person/{{ person.slug }}/outreach/restore" class="mt-2.5">
+          <input type="hidden" name="back" value="/person/{{ person.slug }}#outreach">
+          <button class="text-[12.5px] font-medium px-3.5 py-2 rounded-lg border border-amber-300 bg-white text-amber-900 hover:bg-amber-50">Restore this contact</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% elif not person.outreach_steps %}
   <div class="rounded-xl border border-dashed border-[#DEDFE4] bg-[#FAFAFB] px-4 py-6 text-center">
     <p class="text-[13px] font-medium">Not approached yet</p>
     <p class="text-[12.5px] text-ink-faint mt-1 max-w-sm mx-auto">Starting the sequence creates the first task -
@@ -1469,11 +1680,24 @@
   <ol class="pt-3 border-t border-[#F2F2F5]">
     {# show_draft=False: linkedin_panel above already shows this draft. #}
     {{ outreach_task_row(open_step, back='/person/' ~ person.slug ~ '#outreach',
-                         show_person=False, show_draft=False) }}
+                         show_person=False, show_draft=False, prefs=prefs) }}
   </ol>
   {% else %}
   <p class="pt-3 border-t border-[#F2F2F5] text-[13px] text-emerald-700">Sequence complete - every step closed.</p>
   {% endif %}
+  {% endif %}
+
+  {# The decision not to approach someone belongs with the sequence it opts out
+     of, and at the foot of it: you reach it having read the trail above, which
+     is when the question comes up. The same action sits in the task dialog on
+     the board, for the same reason. #}
+  {% if not person.outreach_rejected %}
+  <form method="post" action="/person/{{ person.slug }}/outreach/reject"
+        class="mt-3 pt-3 border-t border-[#F2F2F5]">
+    <input type="hidden" name="back" value="/person/{{ person.slug }}#outreach">
+    <button class="text-[11.5px] text-ink-faint hover:text-rose-600"
+            title="Decide against approaching them. Reversible, and it closes nothing — they move to the Rejected sheet on the Outreach board.">Don’t contact this person</button>
+  </form>
   {% endif %}
 </section>
 {% endmacro %}

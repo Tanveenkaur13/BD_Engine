@@ -1,12 +1,13 @@
 import os
 from datetime import date, datetime, timezone
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request, Depends, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .db import init_db, get_session, SessionLocal
 from .importer import import_csv
@@ -21,6 +22,7 @@ from . import pipeline
 from . import outreach
 from . import messages
 from . import personalisation
+from . import email_template
 from . import segments
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -105,6 +107,15 @@ templates.env.globals.update(
     OPTION_COUNT=messages.OPTION_COUNT,
     FIX_LABELS=personalisation.FIX_LABELS,
     TIER_LABELS=personalisation.TIER_LABELS,
+    # The outreach email is composed on read, so the panel calls the composer
+    # directly with whatever tone and length the reader picked. Nothing is
+    # stored: the selection rides in the query string and the email is
+    # reassembled, which is why changing it is instant and costs nothing.
+    compose_email=email_template.compose,
+    TEMPLATE_TONES=email_template.TONES,
+    TEMPLATE_LENGTHS=email_template.LENGTHS,
+    DEFAULT_TEMPLATE_TONE=email_template.DEFAULT_TONE,
+    DEFAULT_TEMPLATE_LENGTH=email_template.DEFAULT_LENGTH,
 )
 
 
@@ -167,6 +178,34 @@ def _with_err(target, code):
     return f"{path}{joiner}err={code}{sep}{fragment}"
 
 
+def form_target(back):
+    """Split a back-link into a GET form's action and the fields it must resend.
+
+    Submitting a GET form REPLACES the action URL's query string but keeps its
+    fragment. The tone and length form sits inside the task dialog, which is a
+    CSS :target modal held open by nothing but `#task-<slug>` in the URL — so
+    that fragment has to travel in the action or pressing Apply closes the
+    dialog. Everything already in the query (which sheet is open, the country
+    and category filters) has to come back as hidden fields for the same
+    reason, or Apply would reset the board underneath the reader.
+
+    tone, length and err are dropped: the selects carry the first two, and a
+    stale error must not be re-raised by changing the tone.
+    """
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/outreach"
+    url, sep, fragment = back.partition("#")
+    path, _, query = url.partition("?")
+    keep = {k: v[0] for k, v in parse_qs(query, keep_blank_values=True).items()
+            if k not in ("tone", "length", "err") and v and v[0]}
+    return {"action": f"{path or '/outreach'}{sep}{fragment}", "keep": keep}
+
+
+# Registered here rather than in the globals block above, which is built
+# before this function exists.
+templates.env.globals["form_target"] = form_target
+
+
 def people_q(db):
     return db.query(Person).options(joinedload(Person.company)).order_by(Person.id)
 
@@ -226,20 +265,26 @@ def people_list(request: Request, db: Session = Depends(get_session),
     if status:
         query = query.filter(Person.enrichment_status == status)
 
-    rows = [p for p in query.all() if segments.matches(p, country, category)]
+    # `base` is everything the SQL filters allow; the two segment filters are
+    # then applied in Python, separately, so each dropdown can be counted
+    # against the others without counting against itself.
+    base = query.all()
+    rows = [p for p in base if segments.matches(p, country, category)]
 
-    # Dropdown options are counted over every contact, not the filtered set, so
-    # the options don't disappear the moment you pick one - a select that
-    # empties itself when used cannot be undone.
-    everyone = people_q(db).all()
+    # Each dropdown's numbers reflect every other active filter. Choosing
+    # Germany makes the category counts the counts *within Germany*, which is
+    # what a reader assumes they already were — previously both were counted
+    # over the whole list and disagreed with the table underneath.
+    by_category = [p for p in base if segments.matches(p, "", category)]
+    by_country = [p for p in base if segments.matches(p, country, "")]
 
     return templates.TemplateResponse(
         request, "people.html",
         ctx(request, db, nav="people", people=rows, q=q, status=status,
             country=country, category=category,
-            country_options=segments.country_options(everyone),
-            category_options=segments.category_options(everyone),
-            total_people=len(everyone)),
+            country_options=segments.country_options(by_category, keep=country),
+            category_options=segments.category_options(by_country, keep=category),
+            total_people=db.query(Person).count()),
     )
 
 
@@ -276,6 +321,7 @@ OUTREACH_ERRORS = {
 
 @app.get("/person/{slug}", response_class=HTMLResponse)
 def person_page(slug: str, request: Request, err: str = "",
+                tone: str = "", length: str = "",
                 db: Session = Depends(get_session)):
     person = db.query(Person).filter(Person.slug == slug).first()
     if not person:
@@ -284,7 +330,8 @@ def person_page(slug: str, request: Request, err: str = "",
         request, "person.html",
         ctx(request, db, nav="people", person=person, full_page=True,
             activity_error=ACTIVITY_ERRORS.get(err),
-            outreach_error=OUTREACH_ERRORS.get(err)),
+            outreach_error=OUTREACH_ERRORS.get(err),
+            mail_prefs={"tone": tone, "length": length}),
     )
 
 
@@ -471,7 +518,8 @@ def refresh_linkedin_now(slug: str, back: str = Form(""),
 
 @app.get("/outreach", response_class=HTMLResponse)
 def outreach_board(request: Request, db: Session = Depends(get_session),
-                   view: str = "today", err: str = "", country: str = "", category: str = ""):
+                   view: str = "today", err: str = "", country: str = "",
+                   category: str = "", tone: str = "", length: str = ""):
     """The sequence board, one sheet at a time.
 
     Split by outreach_stage rather than by research status — the question this
@@ -487,7 +535,12 @@ def outreach_board(request: Request, db: Session = Depends(get_session),
     if view not in ("today", "new", "active", "done", "rejected"):
         view = "today"
 
-    everyone = people_q(db).all()
+    # The New sheet reads Person.outreach_prep on every row, which touches
+    # both research relationships. Lazily that is two queries per contact;
+    # eager here it is two for the sheet.
+    everyone = people_q(db).options(
+        selectinload(Person.activities), selectinload(Person.findings)
+    ).all()
     people = [p for p in everyone if segments.matches(p, country, category)]
 
     # outreach_stage puts rejection ahead of every other stage, so a rejected
@@ -516,12 +569,19 @@ def outreach_board(request: Request, db: Session = Depends(get_session),
     return templates.TemplateResponse(
         request, "outreach.html",
         ctx(request, db, nav="outreach", view=view,
+            mail_prefs={"tone": tone, "length": length},
             outreach_error=OUTREACH_ERRORS.get(err), new_people=new,
             rejected=rejected,
             active=active, done=done, sequence=outreach.SEQUENCE,
             due_here=due_here, country=country, category=category,
-            country_options=segments.country_options(everyone),
-            category_options=segments.category_options(everyone)),
+            # Counted against the other filter, never against itself — see
+            # segments.country_options.
+            country_options=segments.country_options(
+                [p for p in everyone if segments.matches(p, "", category)],
+                keep=country),
+            category_options=segments.category_options(
+                [p for p in everyone if segments.matches(p, country, "")],
+                keep=category)),
     )
 
 

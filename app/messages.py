@@ -38,6 +38,12 @@ CHROME_FRAGMENTS = (
     "view profile for", "report this post", "close menu", "see more",
     "like  reply", "like · reply", "s post.", "edited.", "sign in", "join now",
     "no more next content", "comments on linkedin", "view organization page for",
+    # German. The list carries German employers, and LinkedIn localises its
+    # page furniture — so an English-only filter let a whole page of chrome
+    # through as if it were the post.
+    "beitrag von", "profil von", "anzeigen", "diesen beitrag melden",
+    "mehr anzeigen", "jetzt mitglied werden", "anmelden", "kommentare",
+    "gefällt mir", "antworten", "bearbeitet",
 )
 
 # Below this many words of non-furniture text there is nothing to reference.
