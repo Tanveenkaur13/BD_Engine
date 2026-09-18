@@ -1,9 +1,8 @@
 """
 Interest detection — the chips and the "Focus:" line.
 
-Written against the OpenAI-compatible chat-completions format, so the same code
-runs on Groq now and a self-hosted Ollama or vLLM later by changing LLM_BASE_URL.
-No Groq-specific SDK, no rewrite.
+Runs through app/llm.py, which is the only place in this app that calls a
+model — one request shape, one key, one model setting.
 
 Two rules the prompt enforces, because the panel is the most trust-sensitive
 part of the page:
@@ -18,6 +17,8 @@ import os
 from datetime import datetime, timezone
 
 import httpx
+
+from . import llm as _llm
 
 TIMEOUT = 60.0
 MIN_EVIDENCE = 2  # fewer signals than this and we don't guess
@@ -41,7 +42,13 @@ Return JSON only:
  "focus": "one or two sentences, or null if the evidence is too thin"}"""
 
 
-class LLMNotConfigured(RuntimeError):
+# Kept under the old name so every `except LLMNotConfigured` in pipeline.py
+# and main.py still catches it; the class itself now lives in app/llm.py,
+# because "no key on file" is one condition, not one per module.
+LLMNotConfigured = _llm.LLMNotConfigured
+
+
+class _UnusedLLMNotConfigured(RuntimeError):
     pass
 
 
@@ -91,12 +98,6 @@ def detect(person, model=None, base_url=None, api_key=None):
         return {"interests": [], "focus": None,
                 "note": f"only {len(evidence)} piece(s) of evidence — not enough to infer"}
 
-    base_url = base_url or os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1")
-    model = model or os.environ.get("LLM_MODEL", "openai/gpt-oss-120b")
-    api_key = api_key or os.environ.get("LLM_API_KEY", "")
-    if not base_url:
-        raise LLMNotConfigured("LLM_BASE_URL is not set.")
-
     user = (
         f"Person: {person.full_name}\n"
         f"Title in our records: {person.title or 'unknown'}\n"
@@ -106,29 +107,34 @@ def detect(person, model=None, base_url=None, api_key=None):
         "Evidence:\n" + "\n".join(f"- {e}" for e in evidence)
     )
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    r = httpx.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers=headers,
-        json={
-            "model": model,
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": SYSTEM},
-                         {"role": "user", "content": user}],
+    # The shape is fixed, so it is declared rather than hoped for. Every
+    # field is required and nullable instead of optional: a strict schema has
+    # no "maybe absent", and the code below already treats an empty label or a
+    # missing focus as nothing found.
+    schema = {
+        "type": "object",
+        "properties": {
+            "interests": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"},
+                        "evidence": {"type": "string"},
+                    },
+                    "required": ["label", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+            "focus": {"type": ["string", "null"]},
         },
-        timeout=TIMEOUT,
-    )
-    r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"]
-
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        return {"interests": [], "focus": None, "note": "model returned unparseable JSON"}
+        "required": ["interests", "focus"],
+        "additionalProperties": False,
+    }
+    parsed, model = _llm.json_call(SYSTEM, user, schema=schema)
+    if parsed is None:
+        return {"interests": [], "focus": None,
+                "note": "the model returned nothing usable"}
 
     interests = []
     for i, item in enumerate((parsed.get("interests") or [])[:5], start=1):

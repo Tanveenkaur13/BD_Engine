@@ -1,6 +1,6 @@
 import os
 from datetime import date, datetime, timezone
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote_plus
 
 from fastapi import FastAPI, Request, Depends, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -14,10 +14,13 @@ from .importer import import_csv
 from .models import (
     Person, Company, LinkedInActivity, WebFinding, Interest, OutreachStep,
     STATUS_COMPLETE, STATUS_NEEDS_ENRICHMENT, STATUS_FAILED,
-    RESEARCH_DONE, RESEARCH_FAILED,
+    RESEARCH_DONE, RESEARCH_FAILED, RESEARCH_RUNNING,
     ACTIVITY_LABELS,
 )
 from .env import status as env_status
+from . import env as env_module
+from . import llm
+from . import skills
 from . import pipeline
 from . import outreach
 from . import messages
@@ -106,6 +109,9 @@ templates.env.globals.update(
     LINKEDIN_COMMENT_VISIBLE_CHARS=messages.LINKEDIN_COMMENT_VISIBLE_CHARS,
     OPTION_COUNT=messages.OPTION_COUNT,
     FIX_LABELS=personalisation.FIX_LABELS,
+    llm_label=llm.label,
+    llm_ready=llm.configured,
+    skill_ready=skills.available,
     TIER_LABELS=personalisation.TIER_LABELS,
     # The outreach email is composed on read, so the panel calls the composer
     # directly with whatever tone and length the reader picked. Nothing is
@@ -140,7 +146,6 @@ def stats(db):
         "companies_described": db.query(Company).filter(Company.description.isnot(None)).count(),
         "drift": sum(1 for p in db.query(Person).all() if p.title_drift),
         "with_activities": db.query(func.count(func.distinct(LinkedInActivity.person_id))).scalar() or 0,
-        "with_findings": db.query(func.count(func.distinct(WebFinding.person_id))).scalar() or 0,
         "no_direct_phone": db.query(Person).filter(
             or_(Person.phone_direct.is_(None), Person.phone_direct == "")).count(),
     }
@@ -151,7 +156,12 @@ def ctx(request, db, **kw):
             # The header bell is on every page, so its count is resolved here
             # rather than in each route. See outreach.due_steps: this is
             # "open and due today or earlier", overdue included.
-            "pending_today": outreach.due_steps(db)}
+            "pending_today": outreach.due_steps(db),
+            # Resolved here, not per route: any page may be open while a run
+            # is in flight, and base.html turns this into the auto-refresh.
+            "research_running": db.query(Person).filter(
+                Person.research_status == RESEARCH_RUNNING).count() > 0,
+            }
     base.update(kw)
     return base
 
@@ -213,12 +223,12 @@ def people_q(db):
 @app.on_event("startup")
 def startup():
     init_db()
-    # A LinkedIn refresh runs in a daemon thread, so nothing survives a
-    # restart. Anything still flagged as refreshing is a leftover from a
-    # killed process, and would otherwise sit at "Refreshing…" for good.
+    # Research and LinkedIn refresh both run in daemon threads, so neither
+    # survives a restart. Anything still flagged as running or refreshing is a
+    # leftover from a killed process, and would otherwise sit there for good.
     db = SessionLocal()
     try:
-        pipeline.clear_orphaned_refreshes(db)
+        pipeline.clear_orphaned_runs(db)
     finally:
         db.close()
 
@@ -234,7 +244,7 @@ def home(request: Request, db: Session = Depends(get_session), selected: str = N
         # Default to the best-researched contact so the page isn't empty.
         person = max(
             people,
-            key=lambda p: (len(p.activities) * 10 + len(p.findings), bool(p.focus_line)),
+            key=lambda p: (len(p.activities) * 10 + len(p.interests), bool(p.focus_line)),
             default=None,
         )
     return templates.TemplateResponse(
@@ -308,6 +318,8 @@ OUTREACH_ERRORS = {
                 "nothing to start. Their trail is on their own page.",
     "baddate": "That date could not be read, so the step was left where it was. "
                "Use the date picker, or type it as YYYY-MM-DD.",
+    "noskill": "The outbound copy rules in skills/ are missing, so there is "
+               "nothing to draft from. See skills/SKILL.md.",
     "nollm": "No language model is configured, so nothing could be drafted — "
              "see the Settings page.",
     "draft": "Drafting failed. The reason is on the contact's page, under the "
@@ -374,10 +386,9 @@ def research(request: Request, db: Session = Depends(get_session)):
     rows = [{
         "person": p,
         "activities": len(p.activities),
-        "findings": len(p.findings),
         "interests": len(p.interests),
     } for p in people]
-    rows.sort(key=lambda r: -(r["activities"] * 10 + r["findings"]))
+    rows.sort(key=lambda r: -(r["activities"] * 10 + r["interests"]))
     return templates.TemplateResponse(
         request, "research.html", ctx(request, db, nav="research", rows=rows)
     )
@@ -405,18 +416,91 @@ def reports(request: Request, db: Session = Depends(get_session)):
     )
 
 
+SETTINGS_NOTES = {
+    "saved": "Saved. The keys are in use now — no restart needed.",
+    "verified": "Saved, and the Claude key was accepted by the API.",
+    "nothing": "Nothing to save — every field was left blank.",
+    "cleared": "Removed.",
+}
+
+
 @app.get("/settings", response_class=HTMLResponse)
-def settings(request: Request, db: Session = Depends(get_session)):
+def settings(request: Request, err: str = "", ok: str = "",
+             db: Session = Depends(get_session)):
+    # One row per provider, so the template loops rather than repeating a
+    # near-identical card per backend — and adding a third provider is a
+    # dict entry in llm.PROVIDERS, not another block of HTML.
+    providers = [
+        dict(spec, name=name,
+             key_on_file=llm.configured(name),
+             model=llm.model_name(name),
+             active=(name == llm.provider()))
+        for name, spec in llm.PROVIDERS.items()
+    ]
     return templates.TemplateResponse(
         request, "settings.html",
         ctx(request, db, nav="settings",
             firecrawl=bool(os.environ.get("FIRECRAWL_API_KEY")),
-            llm_base=os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1"),
-            llm_model=os.environ.get("LLM_MODEL", "openai/gpt-oss-120b"),
-            llm_key=bool(os.environ.get("LLM_API_KEY")),
+            providers=providers,
+            active_provider=llm.provider(),
+            active_label=llm.label(),
+            settings_ok=SETTINGS_NOTES.get(ok),
+            settings_err=err or None,
             env_file_found=env_status()[0],
             env_file_path=env_status()[1]),
     )
+
+
+@app.post("/settings")
+async def save_settings(request: Request,
+                        llm_provider: str = Form(""),
+                        firecrawl_api_key: str = Form(""),
+                        clear: str = Form(""),
+                        verify: str = Form("")):
+    """Store the provider choice and any keys entered, and use them at once.
+
+    A blank field means "leave it alone" rather than "delete it", so saving the
+    form after entering one key cannot wipe the other — the inputs are empty on
+    every render, because a secret is never echoed back into the HTML. Clearing
+    is therefore its own explicit action.
+    """
+    if clear:
+        env_module.save({clear: ""})
+        return RedirectResponse("/settings?ok=cleared", status_code=303)
+
+    # The per-provider fields are read by name from llm.PROVIDERS rather than
+    # declared one by one in the signature, so the form and the provider list
+    # cannot drift apart — a third provider is a dict entry, not a new argument.
+    form = await request.form()
+    pending = {}
+    for name, spec in llm.PROVIDERS.items():
+        key = (form.get(f"key_{name}") or "").strip()
+        model = (form.get(f"model_{name}") or "").strip()
+        if key:
+            pending[spec["key_var"]] = key
+        if model and model != llm.model_name(name):
+            pending[spec["model_var"]] = model
+
+    if llm_provider in llm.PROVIDERS and llm_provider != llm.provider():
+        pending["LLM_PROVIDER"] = llm_provider
+    if firecrawl_api_key.strip():
+        pending["FIRECRAWL_API_KEY"] = firecrawl_api_key.strip()
+
+    if not pending:
+        return RedirectResponse("/settings?ok=nothing", status_code=303)
+
+    env_module.save(pending)
+
+    # Verification is opt-in because it spends a request against the key the
+    # user just pasted, and a saved-but-unverified key is still saved.
+    if verify and llm.configured():
+        good, message = llm.check_key()
+        if not good:
+            return RedirectResponse(f"/settings?err={quote_plus(message)}",
+                                    status_code=303)
+        return RedirectResponse("/settings?ok=verified", status_code=303)
+
+    return RedirectResponse("/settings?ok=saved", status_code=303)
 
 
 @app.get("/upload", response_class=HTMLResponse)
@@ -738,6 +822,50 @@ def outreach_drafts_clear(step_id: int, back: str = Form(""),
     db.commit()
     return RedirectResponse(_safe_back(back, f"/person/{slug}#outreach"),
                             status_code=303)
+
+
+@app.post("/outreach/{step_id}/skill-email")
+def outreach_skill_email(step_id: int, back: str = Form(""),
+                         db: Session = Depends(get_session)):
+    """Write this contact's email under the brief in skills/.
+
+    Separate from the composed template on the same panel, which needs no key
+    and no model. This one spends a request and produces something written for
+    the person rather than merged into a skeleton, so it is a button rather
+    than something that happens on page load.
+    """
+    step = db.query(OutreachStep).filter(OutreachStep.id == step_id).first()
+    if not step:
+        return RedirectResponse("/outreach", status_code=303)
+    target = _safe_back(back, f"/person/{step.person.slug}#outreach")
+
+    try:
+        result = messages.skill_email(step.person)
+    except messages.LLMNotConfigured:
+        return RedirectResponse(_with_err(target, "nollm"), status_code=303)
+    except skills.SkillMissing:
+        return RedirectResponse(_with_err(target, "noskill"), status_code=303)
+    except Exception as exc:                        # never a 500 on this path
+        step.person.draft_note = f"Drafting failed: {exc}"[:300]
+        db.commit()
+        return RedirectResponse(_with_err(target, "draft"), status_code=303)
+
+    if "reason" in result:
+        step.person.draft_note = result["reason"][:300]
+        db.commit()
+        return RedirectResponse(_with_err(target, "draft"), status_code=303)
+
+    messages.store_options(db, step.person, "email", step.step_key, [{
+        "angle": result["signal"],
+        "subject": result["subject"],
+        "body": result["body"],
+        "basis": f"{result['opportunity']} | confidence "
+                 f"{result['confidence']}: {result['why']}",
+        "model": result["model"],
+    }])
+    step.person.draft_note = None
+    db.commit()
+    return RedirectResponse(target, status_code=303)
 
 
 @app.post("/person/{slug}/suggest-comments")

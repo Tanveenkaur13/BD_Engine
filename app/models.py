@@ -255,6 +255,12 @@ class Person(Base):
     enrichment_status = Column(String, default=STATUS_NEEDS_ENRICHMENT, index=True)
     # Whether research has run for them, and how it went.
     research_status = Column(String, default=RESEARCH_PENDING, index=True)
+    # When a run last finished. Recorded because "did research run" and "did
+    # research find anything" are different questions, and inferring the first
+    # from the second left a contact with no public footprint permanently at
+    # Not researched — offering the button again, to re-spend credits learning
+    # the same nothing. See is_researched.
+    research_completed_at = Column(DateTime)
 
     # Legacy single field. Kept in step with enrichment_status so an older
     # query or export doesn't silently read a frozen value; nothing in the app
@@ -550,8 +556,6 @@ class Person(Base):
             gaps.append("company description (optional)")
         if not self.activities:
             gaps.append("LinkedIn activity (optional)")
-        if not self.findings:
-            gaps.append("web research (optional)")
         return gaps
 
     def missing_fields(self, blocking_only=False):
@@ -567,6 +571,14 @@ class Person(Base):
 
     @property
     def is_researched(self):
+        """Whether a research run has happened for this contact.
+
+        A finished run is the fact, whatever it turned up. The fallback to
+        stored rows is for contacts researched before research_completed_at
+        existed: their run left no timestamp, only its results.
+        """
+        if self.research_completed_at:
+            return True
         return bool(self.findings or self.activities)
 
     @property
@@ -891,6 +903,24 @@ class OutreachStep(Base):
             return None
         return assess(self.person, self.draft_kind,
                       prefer_index=self.prefer_index)
+
+    @property
+    def written_email(self):
+        """The email drafted for this step under the skills/ brief, if any.
+
+        Deliberately not draft_options: that one is gated on wants_draft, which
+        runs the personalisation evidence check belonging to the older
+        multi-option path. The brief does its own refusing — it returns a
+        stated reason rather than a forced email — so gating it a second time
+        here would hide a draft that the brief already decided was fair.
+        """
+        from app.messages import options_for
+        if not self.person:
+            return None
+        for draft in options_for(self.person, self.step_key):
+            if draft.kind == "email":
+                return draft
+        return None
 
     @property
     def draft_options(self):

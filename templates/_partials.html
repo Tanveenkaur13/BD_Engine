@@ -1186,6 +1186,61 @@
 {% set tone = prefs.get('tone') if prefs.get('tone') in TEMPLATE_TONES else DEFAULT_TEMPLATE_TONE %}
 {% set length = prefs.get('length') if prefs.get('length') in TEMPLATE_LENGTHS else DEFAULT_TEMPLATE_LENGTH %}
 {% set mail = compose_email(step.person, tone=tone, length=length) %}
+{% set written = step.written_email %}
+
+{# ------------------------------------------------ the written email ------
+   Drafted by the model under the brief in skills/, from this contact's own
+   posts and their company's news. The composed template below is the other
+   half of the pair: it needs no key and never varies, this one is written for
+   the person and does. Both are shown, because which one to send is a
+   judgement about the lead, not a setting. #}
+<div class="rounded-xl border {% if written %}border-violet2-200 bg-violet2-50/60{% else %}border-[#EAEBEF] bg-[#FAFAFB]{% endif %} p-3 mb-2.5">
+  <div class="flex items-center gap-2 flex-wrap mb-2">
+    <span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-600">Written for {{ step.person.first_name or step.person.full_name }}</span>
+    {% if written %}
+    <span class="text-[10px] text-ink-faint">{{ written.body.split()|length }} words · {{ llm_label() }}{% if written.model %} · {{ written.model }}{% endif %}</span>
+    {% endif %}
+  </div>
+
+  {% if written %}
+  <div class="rounded-lg bg-white border border-violet2-100 p-2.5" data-copy-block>
+    <div class="flex items-baseline gap-2 mb-2 pb-2 border-b border-[#F2F2F5]">
+      <span class="text-[10px] uppercase tracking-wide text-ink-faint shrink-0">Subject</span>
+      <input data-copy-part data-copy-prefix="Subject: " value="{{ written.subject }}"
+             class="flex-1 min-w-0 text-[12.5px] font-medium bg-transparent outline-none">
+      {{ copy_button() }}
+    </div>
+    <textarea data-copy-part rows="9"
+              class="w-full resize-y rounded-lg bg-[#FBFBFC] border border-[#EFEFF2] px-2.5 py-2 text-[12.5px] leading-relaxed outline-none focus:bg-white focus:border-violet2-200">{{ written.body }}</textarea>
+    {% if written.angle %}
+    <p class="text-[10.5px] text-ink-faint mt-2 pt-2 border-t border-[#F2F2F5]">
+      Built on <b class="font-semibold text-ink-soft">{{ written.angle }}</b>
+    </p>
+    {% endif %}
+    {% if written.basis %}
+    <p class="text-[10.5px] text-ink-faint mt-0.5">{{ written.basis }}</p>
+    {% endif %}
+  </div>
+  {% elif step.person.draft_note %}
+  <p class="text-[12px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-2">{{ step.person.draft_note }}</p>
+  {% else %}
+  <p class="text-[12px] text-ink-faint mb-2">Nothing written yet. The brief in <span class="font-mono text-[11px]">skills/</span> and this contact's research decide what it says — and it refuses rather than inventing a hook.</p>
+  {% endif %}
+
+  <form method="post" action="/outreach/{{ step.id }}/skill-email" class="mt-2 flex items-center gap-2 flex-wrap">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="h-8 px-3 rounded-lg bg-violet2-600 hover:bg-violet2-700 text-white text-[12px] font-medium">
+      {% if written %}Rewrite{% else %}Write it{% endif %}
+    </button>
+    <span class="text-[11px] text-ink-faint">one {{ llm_label() }} request</span>
+  </form>
+  {% if written %}
+  <form method="post" action="/outreach/{{ step.id }}/drafts/clear" class="mt-1.5">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="text-[11px] text-ink-faint hover:text-rose-600">Discard it</button>
+  </form>
+  {% endif %}
+</div>
 
 <div class="rounded-xl border {% if mail.missing %}border-amber-100 bg-amber-50/40{% else %}border-violet2-100 bg-violet2-50/40{% endif %} p-3">
 

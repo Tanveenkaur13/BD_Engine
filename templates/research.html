@@ -24,7 +24,6 @@
           <th class="font-medium px-4 py-2.5">Person</th>
           <th class="font-medium px-4 py-2.5">Seniority</th>
           <th class="font-medium px-4 py-2.5 text-center">LinkedIn</th>
-          <th class="font-medium px-4 py-2.5 text-center">Web</th>
           <th class="font-medium px-4 py-2.5 text-center">Interests</th>
           <th class="font-medium px-4 py-2.5">Focus</th>
         </tr>
@@ -40,7 +39,6 @@
           </td>
           <td class="px-4 py-3 text-[13px] text-ink-soft capitalize">{{ r.person.seniority or '—' }}</td>
           <td class="px-4 py-3 text-center text-[13px] {{ 'font-semibold' if r.activities else 'text-ink-faint' }}">{{ r.activities or '0' }}</td>
-          <td class="px-4 py-3 text-center text-[13px] {{ 'font-semibold' if r.findings else 'text-ink-faint' }}">{{ r.findings or '0' }}</td>
           <td class="px-4 py-3 text-center text-[13px] {{ 'font-semibold' if r.interests else 'text-ink-faint' }}">{{ r.interests or '0' }}</td>
           <td class="px-4 py-3">
             {% if r.person.focus_line %}

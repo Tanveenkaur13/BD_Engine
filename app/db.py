@@ -56,6 +56,7 @@ ADDED_COLUMNS = {
         ("linkedin_refreshing", "BOOLEAN DEFAULT 0"),
         ("linkedin_refreshed_at", "DATETIME"),
         ("linkedin_refresh_error", "VARCHAR"),
+        ("research_completed_at", "DATETIME"),
     ],
     "companies": [
         ("web_checked_at", "DATETIME"),

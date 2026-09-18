@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 from app.db import SessionLocal, init_db
 from app.models import (
-    Person, WebFinding, Interest, LinkedInActivity, STATUS_COMPLETE,
+    Person, Interest, LinkedInActivity, STATUS_COMPLETE,
     STATUS_NEEDS_ENRICHMENT, STATUS_FAILED,
 )
 from app import research, resolve, interests as interests_mod
@@ -41,7 +41,7 @@ def main():
     ap.add_argument("--skip-resolve", action="store_true",
                     help="don't try to fill a missing email or LinkedIn URL")
     ap.add_argument("--force", action="store_true",
-                    help="re-research contacts that already have findings")
+                    help="re-research contacts that have already been researched")
     ap.add_argument("--only-linkedin", action="store_true",
                     help="redo only the LinkedIn activity search, for every "
                          "contact — the cheap way to re-run it after the "
@@ -50,8 +50,8 @@ def main():
     args = ap.parse_args()
 
     # --only-linkedin is a mode, not a filter: everything else in the run is
-    # off, and the activity search re-runs for contacts that already have
-    # findings, which the default selection would otherwise skip.
+    # off, and the activity search re-runs for contacts already researched,
+    # which the default selection would otherwise skip.
     if args.only_linkedin:
         args.skip_interests = True
         args.skip_resolve = True
@@ -65,7 +65,7 @@ def main():
         q = q.filter(Person.slug == args.slug)
     people = q.all()
     if not args.force and not args.slug and not args.only_linkedin:
-        people = [p for p in people if not p.findings]
+        people = [p for p in people if not p.is_researched]
     if args.limit:
         people = people[: args.limit]
 
@@ -112,32 +112,9 @@ def main():
             except Exception as e:
                 print(f"  ~ company research failed for {p.company.name}: {e}")
 
-        # ---- step 5: web research
-        rows = list(p.findings) if args.only_linkedin else None
-        if rows is None:
-            try:
-                rows = research.research_person(p, limit=5)
-            except (research.FirecrawlNotConfigured, research.FirecrawlRejected) as e:
-                print(f"  ! {e}")
-                return 1
-            except Exception as e:
-                print(f"  x {label}: {e}")
-                # A failed search says nothing about whether we know who they
-                # are, so it no longer overwrites the enrichment answer.
-                p.recompute_status(research_failed=True, note=str(e)[:200])
-                db.commit()
-                failed += 1
-                continue
-
-        # In --only-linkedin mode `rows` is what is already stored, so there is
-        # nothing to write and the existing rows must not be replaced.
-        if not args.only_linkedin:
-            if args.force:
-                for old in list(p.findings):
-                    db.delete(old)
-            for row in rows:
-                db.add(WebFinding(person=p, **row))
-            db.commit()
+        # ---- step 5: web research about the person — REMOVED
+        # Nothing displayed a WebFinding, so the two searches it cost bought
+        # a count and nothing else. See app/pipeline.py for the full reason.
 
         # ---- step 4: LinkedIn activity links
         # Runs before interest detection because chips are derived from the
@@ -198,6 +175,7 @@ def main():
             except Exception as e:
                 print(f"  ~ interest detection failed for {p.full_name}: {e}")
 
+        p.research_completed_at = datetime.now(timezone.utc)
         p.recompute_status()
         db.commit()
         done += 1

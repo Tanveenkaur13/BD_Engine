@@ -2,35 +2,21 @@
 {% import "_partials.html" as ui %}
 {% block title %}Settings — PeopleIntel{% endblock %}
 
-{% macro row(label, value, ok, note) %}
-<div class="flex items-start justify-between gap-4 py-3 border-b border-[#F2F2F5] last:border-0">
-  <div class="min-w-0">
-    <p class="text-[13.5px] font-medium">{{ label }}</p>
-    <p class="text-[12px] text-ink-faint mt-0.5">{{ note }}</p>
-  </div>
-  <div class="shrink-0 text-right">
-    <p class="text-[12.5px] font-mono">{{ value }}</p>
-    {% if ok %}<span class="text-[10.5px] font-semibold text-emerald-700">configured</span>
-    {% else %}<span class="text-[10.5px] font-semibold text-amber-700">not set</span>{% endif %}
-  </div>
-</div>
-{% endmacro %}
-
 {% block content %}
 <div class="max-w-[820px] mx-auto space-y-4">
   <div>
     <h1 class="text-[22px] font-bold tracking-tight">Settings</h1>
-    <p class="text-[13px] text-ink-faint mt-0.5">Read from environment variables. Nothing is stored in the database — this page reports what the process can see, it can't set it.</p>
+    <p class="text-[13px] text-ink-faint mt-0.5">Enter your API keys here. They are written to <span class="font-mono text-[12px]">.env</span> and used straight away — nothing is stored in the database, and no restart is needed.</p>
   </div>
 
   <section class="card shadow-card p-5">
-    <h3 class="text-[15px] font-bold mb-1.5">Where the keys go</h3>
+    <h3 class="text-[15px] font-bold mb-1.5">Where they are kept</h3>
     <p class="text-[12.5px] text-ink-soft leading-relaxed">
-      Put them in a <b>.env</b> file in the project root — copy
-      <span class="font-mono text-[12px]">.env.example</span> to
-      <span class="font-mono text-[12px]">.env</span> and fill it in. It's read
-      at startup, so <b>restart the server</b> after editing. A variable already
-      set in your shell wins over the file.
+      In a <b>.env</b> file in the project root, written by the form below.
+      Editing that file by hand still works; it is read at startup, so
+      <b>restart the server</b> after doing it that way. A variable exported in
+      your shell wins over the file at startup — so if a key looks stuck at an
+      old value after a restart, that is where to look.
     </p>
     <div class="mt-3 rounded-xl border {% if env_file_found %}border-emerald-100 bg-emerald-50{% else %}border-amber-100 bg-amber-50{% endif %} px-3.5 py-2.5">
       <p class="text-[12px] {% if env_file_found %}text-emerald-700{% else %}text-amber-800{% endif %}">
@@ -42,22 +28,125 @@
       Prefer the shell? Set them in the same terminal you start the server from,
       then launch it there — a new terminal won't have them.
     </p>
-    <pre class="mt-2 overflow-x-auto rounded-xl bg-[#FAFAFB] border border-[#EFEFF2] p-3 text-[11.5px] font-mono leading-relaxed">$env:FIRECRAWL_API_KEY = "fc-..."      # PowerShell
-export FIRECRAWL_API_KEY=fc-...        # bash / zsh</pre>
+    <pre class="mt-2 overflow-x-auto rounded-xl bg-[#FAFAFB] border border-[#EFEFF2] p-3 text-[11.5px] font-mono leading-relaxed">$env:ANTHROPIC_API_KEY = "sk-ant-..."   # PowerShell
+$env:FIRECRAWL_API_KEY = "fc-..."
+export ANTHROPIC_API_KEY=sk-ant-...     # bash / zsh
+export FIRECRAWL_API_KEY=fc-...</pre>
   </section>
 
-  <section class="card shadow-card p-5">
-    <h3 class="text-[15px] font-bold mb-1">Web research</h3>
-    {{ row('FIRECRAWL_API_KEY', '••••' if firecrawl else '—', firecrawl,
-           'Powers company research and the Google/Web panel.') }}
-  </section>
+  {# ---------------------------------------------------------- the keys ----
+     Entered here and written to .env AND into the running process, so a key
+     works on the next click rather than after a restart. The inputs render
+     empty every time: a secret is never echoed back into the page, which also
+     means a blank field has to mean "leave it alone" rather than "delete it".
+     Clearing is its own button for that reason. #}
+  {% if settings_ok %}
+  <div class="rounded-xl border border-emerald-100 bg-emerald-50 px-3.5 py-2.5">
+    <p class="text-[12.5px] text-emerald-800">{{ settings_ok }}</p>
+  </div>
+  {% endif %}
+  {% if settings_err %}
+  <div class="rounded-xl border border-rose-100 bg-rose-50 px-3.5 py-2.5">
+    <p class="text-[12.5px] text-rose-800">{{ settings_err }}</p>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/settings" class="space-y-4">
+
+    {# One card per entry in llm.PROVIDERS. The radio picks which one the app
+       actually calls; the keys for both can sit on file at once, so switching
+       back is a click and not a re-paste. #}
+    <section class="card shadow-card p-5">
+      <h3 class="text-[15px] font-bold mb-1">Language model</h3>
+      <p class="text-[12px] text-ink-faint mb-3">Drafts the suggested comments, the interest chips and the focus line. Without a key those three are skipped; everything else in the app still works.</p>
+
+      <div class="space-y-3">
+        {% for p in providers %}
+        <label class="block rounded-xl border {% if p.active %}border-violet2-200 bg-violet2-50/40{% else %}border-[#EAEBEF]{% endif %} p-3.5 cursor-pointer">
+          <div class="flex items-center gap-2 flex-wrap">
+            <input type="radio" name="llm_provider" value="{{ p.name }}" {% if p.active %}checked{% endif %}
+                   class="text-violet2-600">
+            <span class="text-[13.5px] font-semibold">{{ p.label }}</span>
+            {% if p.active %}<span class="text-[10px] font-semibold uppercase tracking-wide text-violet2-700 bg-white border border-violet2-200 rounded-full px-1.5 py-0.5">in use</span>{% endif %}
+            {% if p.key_on_file %}
+            <span class="text-[10.5px] font-semibold text-emerald-700">key on file</span>
+            {% else %}
+            <span class="text-[10.5px] font-semibold text-amber-700">no key yet</span>
+            {% endif %}
+          </div>
+          <p class="text-[11.5px] text-ink-faint mt-1 ml-6">{{ p.note }}</p>
+
+          <div class="mt-2.5 ml-6 grid sm:grid-cols-2 gap-2.5">
+            <div>
+              <span class="block text-[11.5px] text-ink-faint mb-1">API key</span>
+              <input type="password" name="key_{{ p.name }}" autocomplete="off" spellcheck="false"
+                     placeholder="{{ 'leave blank to keep the saved key' if p.key_on_file else p.key_hint }}"
+                     class="w-full h-8 px-2.5 rounded-lg bg-white border border-[#E2E3E8] text-[12.5px] font-mono outline-none focus:border-violet2-300">
+            </div>
+            <div>
+              <span class="block text-[11.5px] text-ink-faint mb-1">Model</span>
+              <input type="text" name="model_{{ p.name }}" value="{{ p.model }}" spellcheck="false"
+                     class="w-full h-8 px-2.5 rounded-lg bg-white border border-[#E2E3E8] text-[12.5px] font-mono outline-none focus:border-violet2-300">
+            </div>
+          </div>
+          <p class="text-[11px] text-ink-faint mt-1.5 ml-6">
+            Key from <a href="{{ p.console }}" target="_blank" rel="noopener" class="text-violet2-600 hover:underline">{{ p.console|domain }}</a>.
+            Default model <span class="font-mono">{{ p.default_model }}</span>.
+          </p>
+        </label>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card shadow-card p-5">
+      <div class="flex items-baseline justify-between gap-3 mb-1">
+        <h3 class="text-[15px] font-bold">Firecrawl</h3>
+        {% if firecrawl %}
+        <span class="text-[10.5px] font-semibold text-emerald-700">key on file</span>
+        {% else %}
+        <span class="text-[10.5px] font-semibold text-amber-700">no key yet</span>
+        {% endif %}
+      </div>
+      <p class="text-[12px] text-ink-faint mb-3">The web search behind company research and LinkedIn activity. Without it the Research button has nothing to call.</p>
+
+      <label class="block">
+        <span class="block text-[12.5px] font-medium mb-1">API key</span>
+        <input type="password" name="firecrawl_api_key" autocomplete="off" spellcheck="false"
+               placeholder="{{ 'leave blank to keep the key already saved' if firecrawl else 'fc-...' }}"
+               class="w-full h-9 px-3 rounded-lg bg-white border border-[#E2E3E8] text-[13px] font-mono outline-none focus:border-violet2-300">
+        <span class="block text-[11.5px] text-ink-faint mt-1">
+          From <a href="https://firecrawl.dev" target="_blank" rel="noopener" class="text-violet2-600 hover:underline">firecrawl.dev</a>.
+        </span>
+      </label>
+    </section>
+
+    <div class="flex items-center gap-2.5 flex-wrap">
+      <button class="h-9 px-4 rounded-lg bg-violet2-600 hover:bg-violet2-700 text-white text-[13px] font-medium">Save</button>
+      <label class="inline-flex items-center gap-1.5 text-[12.5px] text-ink-soft">
+        <input type="checkbox" name="verify" value="1" class="rounded border-[#E2E3E8]">
+        check the {{ active_label }} key against the API
+      </label>
+      <span class="text-[11.5px] text-ink-faint">Blank fields are left as they are.</span>
+    </div>
+  </form>
 
   <section class="card shadow-card p-5">
-    <h3 class="text-[15px] font-bold mb-1">Language model</h3>
-    <p class="text-[12px] text-ink-faint mb-1">Any OpenAI-compatible endpoint. Groq now, a self-hosted Ollama or vLLM later — a URL change, not a rewrite.</p>
-    {{ row('LLM_BASE_URL', llm_base, true, 'Groq and Ollama both speak this format.') }}
-    {{ row('LLM_MODEL', llm_model, true, 'Used for interest detection and the focus line.') }}
-    {{ row('LLM_API_KEY', '••••' if llm_key else '—', llm_key, 'Not needed for a local Ollama.') }}
+    <h3 class="text-[15px] font-bold mb-1">Remove a key</h3>
+    <p class="text-[12px] text-ink-faint mb-3">Deletes it from <span class="font-mono">.env</span> and from the running process.</p>
+    <div class="flex gap-2 flex-wrap">
+      {% for p in providers %}{% if p.key_on_file %}
+      <form method="post" action="/settings">
+        <input type="hidden" name="clear" value="{{ p.key_var }}">
+        <button class="h-8 px-3 rounded-lg border border-[#EAEBEF] text-[12px] text-ink-soft hover:text-rose-600 hover:bg-[#FAFAFB]">Remove {{ p.label }} key</button>
+      </form>
+      {% endif %}{% endfor %}
+      {% if firecrawl %}
+      <form method="post" action="/settings">
+        <input type="hidden" name="clear" value="FIRECRAWL_API_KEY">
+        <button class="h-8 px-3 rounded-lg border border-[#EAEBEF] text-[12px] text-ink-soft hover:text-rose-600 hover:bg-[#FAFAFB]">Remove Firecrawl key</button>
+      </form>
+      {% endif %}
+    </div>
   </section>
 
   <section class="card shadow-card p-5 bg-[#FAFAFB]">
@@ -67,19 +156,10 @@ export FIRECRAWL_API_KEY=fc-...        # bash / zsh</pre>
     the text of the post. There is no setting here to change, by design.</p>
   </section>
 
-  <section class="card shadow-card p-5">
-    <h3 class="text-[15px] font-bold mb-2">Stack</h3>
-    <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[12.5px]">
-      {% for k, v in [
-        ('Web framework', 'FastAPI (Python)'),
-        ('Templates', 'Jinja2 — server rendered'),
-        ('Styling', 'Tailwind, Play CDN'),
-        ('Interactivity', 'HTMX + plain forms'),
-        ('Database', 'SQLite via SQLAlchemy'),
-        ('Node.js', 'not used anywhere') ] %}
-      <div class="flex gap-2 min-w-0"><span class="text-ink-faint w-[104px] shrink-0">{{ k }}</span><span class="font-medium min-w-0">{{ v }}</span></div>
-      {% endfor %}
-    </div>
-  </section>
+  {# The Stack panel lived here. Removed: it was hand-maintained trivia on a
+     page meant for configuration, and it had drifted into being wrong —
+     claiming Tailwind's Play CDN and HTMX when base.html loads a prebuilt
+     local stylesheet and no HTMX exists anywhere. The stack is described in
+     README.md, next to the code that can keep it honest. #}
 </div>
 {% endblock %}

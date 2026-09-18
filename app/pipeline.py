@@ -17,7 +17,7 @@ from . import resolve
 from . import messages as messages_mod
 from .db import SessionLocal
 from .models import (
-    CompanyFinding, Interest, LinkedInActivity, Person, WebFinding,
+    CompanyFinding, Interest, LinkedInActivity, Person,
     RESEARCH_RUNNING,
 )
 
@@ -79,7 +79,7 @@ def research_contact(db, person, skip_interests=False, skip_linkedin=False,
     Returns a dict of counts and a list of non-fatal step failures. Raises
     Blocked when the API refuses the whole run.
     """
-    out = {"findings": 0, "activities": 0, "interests": 0,
+    out = {"activities": 0, "interests": 0,
            "comments_drafted": 0, "company_described": False,
            "company_findings": 0,
            "resolved": [], "problems": []}
@@ -143,25 +143,14 @@ def research_contact(db, person, skip_interests=False, skip_linkedin=False,
         except Exception as e:
             out["problems"].append(f"company web research: {e}")
 
-    # ---- step 5: web research
-    try:
-        rows = research.research_person(person, limit=5)
-    except (research.FirecrawlNotConfigured, research.FirecrawlRejected) as e:
-        raise Blocked(str(e)) from e
-    except Exception as e:
-        person.recompute_status(research_failed=True, note=str(e)[:200])
-        db.commit()
-        out["problems"].append(f"web research: {e}")
-        return out
-
-    if force:
-        for old in list(person.findings):
-            db.delete(old)
-        db.flush()
-    for row in rows:
-        db.add(WebFinding(person=person, **row))
-    out["findings"] = len(rows)
-    db.commit()
+    # ---- step 5: web research about the person — REMOVED
+    #
+    # It cost two Firecrawl searches per contact and had no panel: nothing in
+    # the app displayed a WebFinding, only counted them. The company question
+    # is asked properly by research_company_web above, and what the person
+    # themselves said is LinkedIn activity, which step 4 collects. The model,
+    # the table and the rows already gathered are left alone — interest
+    # detection still reads them where they exist.
 
     # ---- step 4: LinkedIn activity links
     # Before interest detection, because chips are derived from the text of
@@ -207,6 +196,8 @@ def research_contact(db, person, skip_interests=False, skip_linkedin=False,
         except Exception as e:
             out["problems"].append(f"comment drafting: {e}")
 
+    # Stamped before recompute_status, which reads it through is_researched.
+    person.research_completed_at = datetime.now(timezone.utc)
     person.recompute_status()
     db.commit()
     return out
@@ -253,26 +244,43 @@ def mark_running(db, person):
     db.commit()
 
 
-def clear_orphaned_refreshes(db):
-    """Reset any linkedin_refreshing flag left set by a killed process.
+def clear_orphaned_runs(db):
+    """Reset work left in flight by a killed process — research and refresh.
 
-    The refresh runs in a daemon thread, so it cannot outlive the process that
+    Both run in daemon threads, so neither can outlive the process that
     started it: a restart, a crash or a --reload mid-run leaves the flag set
-    with nothing still working on it. The panel would then show "Refreshing…"
-    forever and never offer the button again, with no way back from the UI.
-    Anything still marked refreshing at startup is by definition an orphan.
+    with nothing still working on it. The page would then show "Researching…"
+    or "Refreshing…" for good and never offer the button again, with no way
+    back from the UI. Anything still marked in flight at startup is by
+    definition an orphan.
 
-    Returns how many were cleared.
+    Returns {"research": n, "linkedin": n}.
     """
+    # Research runs in a daemon thread for exactly the same reason and strands
+    # exactly the same way — worse, in fact: can_research is False while a
+    # contact is "running", so the button disappears and there is no way back
+    # from the UI at all. run.ps1 passes --reload by default, so saving a file
+    # mid-run is enough to cause it.
+    orphaned = db.query(Person).filter(
+        Person.research_status == RESEARCH_RUNNING).all()
+    for person in orphaned:
+        person.recompute_status(
+            research_failed=True,
+            note="Interrupted - the server restarted while this research was "
+                 "running. Nothing was saved from it; press Retry.")
+
     stuck = db.query(Person).filter(Person.linkedin_refreshing == True).all()  # noqa: E712
     for person in stuck:
         person.linkedin_refreshing = False
         person.linkedin_refresh_error = (
             "Interrupted — the server restarted while this refresh was running."
         )
-    if stuck:
+    # Commit if EITHER sweep found something. Gating this on `stuck` alone
+    # meant the research reset was rolled back the moment nothing needed a
+    # LinkedIn reset — which is most of the time.
+    if orphaned or stuck:
         db.commit()
-    return len(stuck)
+    return {"research": len(orphaned), "linkedin": len(stuck)}
 
 
 def refresh_linkedin_in_background(slug):

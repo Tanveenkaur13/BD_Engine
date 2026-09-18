@@ -30,6 +30,9 @@ from datetime import datetime, timezone
 
 import httpx
 
+from . import llm as _llm
+from . import skills as _skills
+
 TIMEOUT = 60.0
 
 # Page furniture that survives into a snippet. Matched as fragments, since the
@@ -82,7 +85,12 @@ Return JSON only:
 {"comment": "the comment text"} or {"comment": null, "why": "why not"}"""
 
 
-class LLMNotConfigured(RuntimeError):
+# Same class as interests.LLMNotConfigured — see app/llm.py. Kept under
+# this name because route and pipeline code catches it by module.
+LLMNotConfigured = _llm.LLMNotConfigured
+
+
+class _UnusedLLMNotConfigured(RuntimeError):
     pass
 
 
@@ -188,36 +196,38 @@ def suggest_comment(person, activity, model=None, base_url=None, api_key=None):
                           "specific to reference. Paste the real post text and "
                           "a draft becomes possible."}
 
-    base_url = base_url or os.environ.get("LLM_BASE_URL",
-                                          "https://api.groq.com/openai/v1")
-    model = model or os.environ.get("LLM_MODEL", "openai/gpt-oss-120b")
-    api_key = api_key or os.environ.get("LLM_API_KEY", "")
-    if not base_url:
-        raise LLMNotConfigured("LLM_BASE_URL is not set — see the Settings page.")
-
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    response = httpx.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers=headers,
-        json={
-            "model": model,
-            "temperature": 0.4,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": SYSTEM},
-                         {"role": "user", "content": _post_context(person, activity)}],
+    # Either a comment or a reason there isn't one — both declared, both
+    # nullable, because a strict schema cannot say "one of these two".
+    schema = {
+        "type": "object",
+        "properties": {
+            "comment": {"type": ["string", "null"]},
+            "why": {"type": ["string", "null"]},
         },
-        timeout=TIMEOUT,
-    )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-
+        "required": ["comment", "why"],
+        "additionalProperties": False,
+    }
+    # The brief in skills/ is the prompt when it is on disk. SYSTEM stays as
+    # the fallback so an install without the skill folder still drafts rather
+    # than failing — the rules it carries are the same ones, written before the
+    # brief existed.
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        return {"reason": "the model returned unparseable JSON"}
+        system = _skills.comment_system()
+        from_skill = True
+    except (_skills.SkillMissing, OSError):
+        system, from_skill = SYSTEM, False
+
+    parsed, model = _llm.json_call(
+        system, _post_context(person, activity), schema=schema)
+    if parsed is None:
+        return {"reason": "the model returned nothing usable"}
+
+    # The brief bans a set of comment openers by name. Checked here rather than
+    # only asked for, the same way reject_reason already checks BANNED_PHRASES.
+    if from_skill:
+        hit = _skills.banned_hits(parsed.get("comment") or "", "comment")
+        if hit:
+            return {"reason": f"draft discarded - the brief bans {hit[0]!r}"}
 
     comment = parsed.get("comment")
     if not comment:
@@ -591,39 +601,20 @@ def _evidence_text(signals):
     return " ".join((s["text"] or "") for s in signals)
 
 
-def _call(system, user, temperature=0.6, model=None, base_url=None, api_key=None):
-    """One chat-completions call returning parsed JSON, or None."""
-    base_url = base_url or os.environ.get("LLM_BASE_URL",
-                                          "https://api.groq.com/openai/v1")
-    model = model or os.environ.get("LLM_MODEL", "openai/gpt-oss-120b")
-    api_key = api_key or os.environ.get("LLM_API_KEY", "")
-    if not base_url:
-        raise LLMNotConfigured("LLM_BASE_URL is not set — see the Settings page.")
+def _call(system, user, temperature=None, model=None, base_url=None, api_key=None):
+    """One Claude call returning parsed JSON, or None.
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    No schema: the two prompts behind this each describe their own JSON
+    skeleton and their option objects differ, so the shape is left to the
+    prompt — which is what it was before, response_format only ever promised
+    valid JSON, not a particular shape.
 
-    response = httpx.post(
-        f"{base_url.rstrip('/')}/chat/completions",
-        headers=headers,
-        json={
-            "model": model,
-            # Higher than the single draft's 0.4: three options that read the
-            # same are one option, and the checks below catch what drifts.
-            "temperature": temperature,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": user}],
-        },
-        timeout=TIMEOUT,
-    )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    try:
-        return json.loads(content), model
-    except json.JSONDecodeError:
-        return None, model
+    `temperature` is accepted and ignored. It used to raise the single draft's
+    0.4 to 0.6 so three options would differ from each other; Claude Sonnet 5
+    has no temperature, so that instruction belongs in the prompt. The argument
+    stays so the dormant callers still bind.
+    """
+    return _llm.json_call(system, user)
 
 
 COMMENT_OPTIONS_SYSTEM = """You are the head of marketing at Screwdriver, a \
@@ -1008,3 +999,143 @@ def suggest_for_step(db, person, step, tone=None, length=None):
     stored = store_options(db, person, kind, step.step_key, result["options"])
     return {"verdict": verdict, "stored": stored,
             "discarded": result.get("discarded", []), "reason": None}
+
+
+# ===========================================================================
+# The skill-written email
+#
+# Distinct from app/email_template.py, which composes a fixed skeleton and
+# never calls a model. This one hands the research to the model under the
+# brief in skills/ and asks it to write the email — more personal, and
+# non-deterministic, which is the trade. The two disagree by design: the
+# template is ~155 words around fixed brand blocks; the brief says 80-120
+# words with no boilerplate at all. The brief wins here because the brief is
+# what this function is for.
+# ===========================================================================
+
+EMAIL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "subject": {"type": "string"},
+        "body": {"type": "string"},
+        "signal": {"type": "string"},
+        "opportunity": {"type": "string"},
+        "confidence": {"type": "string", "enum": ["High", "Medium", "Low"]},
+        "why": {"type": "string"},
+    },
+    "required": ["subject", "body", "signal", "opportunity", "confidence", "why"],
+    "additionalProperties": False,
+}
+
+
+def email_research(person):
+    """Everything the brief's Step 1 asks to be given, and nothing invented.
+
+    Each line is labelled with where it came from, because the brief's
+    guardrail is that every claim must trace to something supplied.
+    """
+    company = person.company
+    bits = [
+        f"Person: {person.full_name}",
+        f"Role: {person.title or 'unknown'}",
+        f"Company: {company.name if company else 'unknown'}",
+    ]
+    if person.linkedin_url:
+        bits.append(f"LinkedIn: {person.linkedin_url}")
+    if company and company.industry:
+        bits.append(f"Industry (from the CSV): {company.industry}")
+    if company and company.description:
+        bits.append(f"What the company says it does (from its own site): "
+                    f"{company.description}")
+
+    findings = list(company.findings) if company else []
+    if findings:
+        bits.append("")
+        bits.append("Recent company news found by search:")
+        for f in findings[:5]:
+            when = f.fetched_at.date().isoformat() if f.fetched_at else "date unknown"
+            bits.append(f"- [{f.kind or 'article'}, seen {when}] {f.title}"
+                        + (f" - {f.snippet}" if getattr(f, "snippet", None) else ""))
+
+    posts = [a for a in person.activities if has_substance(a.text)]
+    if posts:
+        bits.append("")
+        bits.append("Their own recent LinkedIn activity, verbatim:")
+        for a in posts[:5]:
+            when = a.activity_date.isoformat() if a.activity_date else "date unknown"
+            bits.append(f"- [{a.type_label}, {when}] {substance_of(a.text)}")
+
+    if person.interests:
+        labels = ", ".join(i.label for i in person.interests if i.label)
+        if labels:
+            bits.append("")
+            bits.append(f"Interests inferred from that activity: {labels}")
+
+    bits.append("")
+    bits.append("Sign the email as: " + sender()["name"])
+    return "\n".join(bits)
+
+
+def skill_email(person):
+    """Draft one personalised cold email under the brief in skills/.
+
+    Returns {"subject", "body", "signal", "opportunity", "confidence", "why",
+    "model", "generated_at", "words"} or {"reason": "..."}.
+
+    Raises LLMNotConfigured when no provider has a key.
+    """
+    system = _skills.email_system()          # SkillMissing propagates
+    parsed, model = _llm.json_call(system, email_research(person),
+                                   schema=EMAIL_SCHEMA)
+    if parsed is None:
+        return {"reason": "the model returned nothing usable"}
+
+    subject = (parsed.get("subject") or "").strip()
+    body = (parsed.get("body") or "").strip()
+    confidence = (parsed.get("confidence") or "Low").strip().title()
+    why = (parsed.get("why") or "").strip()
+
+    # The brief says an unsupportable lead gets a stated refusal rather than a
+    # forced email, and returns Low with the fields empty. Honour that instead
+    # of treating it as a malformed reply.
+    if not body:
+        return {"reason": why or "the research would not support a personalised "
+                                 "email, so none was written"}
+
+    words = _skills.word_count(body)
+    low, high = _skills.EMAIL_WORDS
+    if not (low * 0.8 <= words <= high * 1.25):
+        return {"reason": f"draft discarded - {words} words against the brief's "
+                          f"{low}-{high}"}
+
+    hit = _skills.banned_hits(body, "email") or _skills.banned_hits(subject, "email")
+    if hit:
+        return {"reason": f"draft discarded - the brief bans {hit[0]!r}"}
+
+    bad = reject_email_body(body)
+    if bad:
+        return {"reason": f"draft discarded - {bad}"}
+
+    return {
+        "subject": subject,
+        "body": body,
+        "signal": (parsed.get("signal") or "").strip(),
+        "opportunity": (parsed.get("opportunity") or "").strip(),
+        "confidence": confidence if confidence in ("High", "Medium", "Low") else "Low",
+        "why": why,
+        "words": words,
+        "model": model,
+        "generated_at": datetime.now(timezone.utc),
+    }
+
+
+def reject_email_body(body):
+    """The checks that are about being sendable rather than about voice."""
+    low = (body or "").lower()
+    for marker in PLACEHOLDER_MARKERS:
+        if marker in low:
+            return f"contains a placeholder ({marker!r})"
+    if "\u2014" in body:
+        # voice-and-format.md bans the em-dash outright in this copy.
+        return "contains an em-dash, which the brief bans"
+    return None

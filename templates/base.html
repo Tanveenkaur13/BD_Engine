@@ -190,5 +190,30 @@ document.addEventListener('click', function (e) {
 });
 </script>
 
+{# Research runs in a background thread while this page is static HTML, so
+   without this the "Researching…" badge sits there long after the run landed
+   and a finished run reads as a hang. Same fix the LinkedIn refresh already
+   had; rendered only while a run is actually in flight, so it cannot loop
+   forever, and resolved once in main.ctx() so every page gets it.
+
+   It holds off while the reader is typing — a reload mid-sentence would throw
+   away a half-written note — and looks again shortly after. With scripts off
+   it degrades to what it did before: reload the page yourself. #}
+{% if research_running %}
+<script>
+(function () {
+  function tick() {
+    var el = document.activeElement;
+    if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) {
+      setTimeout(tick, 4000);     // still typing - ask again shortly
+      return;
+    }
+    location.reload();
+  }
+  setTimeout(tick, 8000);         // a run is tens of seconds, not four
+})();
+</script>
+{% endif %}
+
 </body>
 </html>
